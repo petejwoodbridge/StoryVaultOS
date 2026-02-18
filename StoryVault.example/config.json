@@ -1,0 +1,11 @@
+{
+  "current_project": "GETTING STARTED",
+  "vault_path": "StoryVault",
+  "openai_api_key": null,
+  "model": "gpt-4o-mini",
+  "token_tracking": {
+    "total_prompt_tokens": 0,
+    "total_completion_tokens": 0,
+    "total_cost": 0.0
+  }
+}
