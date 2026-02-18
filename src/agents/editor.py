@@ -28,7 +28,13 @@ Constraints you must obey:
 """
 
     def get_task_prompt(self, task: str, context: dict) -> str:
-        critique = context.get("critique", "No critique notes provided.")
+        critique = context.get("critique", "")
+        critique_block = f"\n## CRITIQUE NOTES\n\n{critique}\n" if critique else ""
+        section = context.get("section_content", "")
+        heading = context.get("section_heading", "")
+        section_block = f"\n## SECTION: {heading}\n\n{section}\n" if section else ""
+        prior = context.get("prior_deliberation", "")
+        prior_block = f"\n## PRIOR DELIBERATION\n\n{prior}\n" if prior else ""
 
         return f"""\
 ## TASK
@@ -52,18 +58,13 @@ Constraints you must obey:
 ## ORIGINAL CONTENT
 
 {context.get('current_content', 'No original content provided.')}
-
----
-
-## CRITIQUE NOTES
-
-{critique}
-
+{section_block}{critique_block}{prior_block}
 ---
 
 ## INSTRUCTIONS
 
-Revise the original content based on the critique notes above.
+Revise the content based on the critique notes and deliberation above.
+Apply changes surgically — preserve what works, fix what is broken.
 Output only the complete revised content — no preamble, no change log.
 The output will directly replace the original file.
 """

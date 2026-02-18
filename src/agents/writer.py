@@ -39,7 +39,12 @@ Constraints you must obey:
 
     def get_task_prompt(self, task: str, context: dict) -> str:
         current = context.get("current_content", "")
-        current_block = f"\n## Existing Content\n\n{current}\n" if current else ""
+        current_block = f"\n## EXISTING CONTENT\n\n{current}\n" if current else ""
+        section = context.get("section_content", "")
+        heading = context.get("section_heading", "")
+        section_block = f"\n## SECTION: {heading}\n\n{section}\n" if section else ""
+        prior = context.get("prior_deliberation", "")
+        prior_block = f"\n## PRIOR DELIBERATION\n\n{prior}\n" if prior else ""
 
         return f"""\
 ## TASK
@@ -57,11 +62,12 @@ Constraints you must obey:
 ## WORKING MEMORY
 
 {context.get('working_memory', 'No working memory.')}
-{current_block}
+{current_block}{section_block}{prior_block}
 ---
 
 ## INSTRUCTIONS
 
 Write the content now. Output only the final content — no preamble, no footnotes.
 Format as clean markdown. Be specific, vivid, and true to the storyworld.
+Draw directly on the prior deliberation above — build on what the room has established.
 """

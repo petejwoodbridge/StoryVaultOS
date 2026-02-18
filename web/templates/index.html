@@ -587,8 +587,40 @@ pre.content-pre {
     <select id="proj-select" title="Switch project"></select>
     <button id="btn-new-proj">+ NEW</button>
   </div>
-  <span id="tok-display" class="c-dim">TOKENS: 0 | $0.0000</span>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span id="tok-display" class="c-dim">TOKENS: 0 | $0.0000</span>
+    <button id="undo-btn" onclick="toggleUndoPanel()"
+      style="font-size:9px;padding:2px 8px;color:var(--yellow);border:1px solid var(--yellow);
+             background:none;cursor:pointer;letter-spacing:1px;font-family:inherit">
+      &#8635; UNDO
+    </button>
+    <!-- SERVER STATUS -->
+    <div style="display:flex;align-items:center;gap:6px">
+      <span id="srv-dot" style="width:8px;height:8px;border-radius:50%;background:#333;
+            display:inline-block;flex-shrink:0;transition:background .3s"></span>
+      <span id="srv-label" style="font-size:9px;letter-spacing:1px;color:#555;min-width:36px">···</span>
+      <button id="srv-btn" onclick="serverAction()"
+        style="font-size:9px;padding:2px 8px;background:none;border:1px solid #333;
+               color:#555;cursor:pointer;letter-spacing:1px;font-family:inherit;
+               transition:color .3s,border-color .3s;min-width:44px">
+        ···
+      </button>
+    </div>
+  </div>
 </header>
+
+<!-- UNDO PANEL -->
+<div id="undo-panel" style="display:none;position:fixed;top:44px;right:0;width:380px;
+     max-height:70vh;overflow-y:auto;background:#0a0a0a;border:1px solid #222;
+     border-top:2px solid var(--yellow);padding:14px;z-index:999;box-shadow:-4px 4px 20px #000">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <span style="color:var(--yellow);letter-spacing:1px;font-size:11px">&#8635; UNDO HISTORY</span>
+    <button onclick="$('undo-panel').style.display='none'"
+      style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:14px">✕</button>
+  </div>
+  <div class="c-dim" style="font-size:10px;margin-bottom:10px">Last 15 writes — click RESTORE to revert.</div>
+  <div id="undo-list"><div class="c-dim" style="font-size:11px">Loading…</div></div>
+</div>
 
 <!-- ═══ WORKSPACE ═══ -->
 <div id="workspace">
@@ -600,14 +632,15 @@ pre.content-pre {
     <div class="nav-item" data-view="wb_lore">&nbsp;&nbsp;LORE &amp; HISTORY</div>
     <div class="nav-item" data-view="wb_logic">&nbsp;&nbsp;WORLD LOGIC</div>
     <div class="nav-item" data-view="wb_tone">&nbsp;&nbsp;TONE &amp; STYLE</div>
-    <div class="nav-item" data-view="wb_structure">&nbsp;&nbsp;STRUCTURE</div>
+    <div class="nav-item" data-view="wb_structure">&nbsp;&nbsp;STORY</div>
     <div class="nav-item" data-view="wb_rules">&nbsp;&nbsp;WORLD RULES</div>
     <div class="nav-sep"></div>
     <div class="nav-group">KB ENTITIES</div>
-    <div class="nav-item" data-view="characters">&gt; CHARACTERS</div>
+    <div class="nav-item" data-view="characters">&gt; LEAD CHARACTERS</div>
     <div class="nav-item" data-view="locations">&nbsp;&nbsp;LOCATIONS</div>
     <div class="nav-item" data-view="objects">&nbsp;&nbsp;OBJECTS</div>
     <div class="nav-item" data-view="events">&nbsp;&nbsp;EVENTS</div>
+    <div class="nav-item" data-view="concepts">&nbsp;&nbsp;CONCEPTS</div>
     <div class="nav-sep"></div>
     <div class="nav-group">DEVELOPMENT</div>
     <div class="nav-item" data-view="synopsis">&gt; SYNOPSIS</div>
@@ -617,6 +650,7 @@ pre.content-pre {
     <div class="nav-item" data-view="storybibs">&nbsp;&nbsp;STORY BIBLES</div>
     <div class="nav-item" data-view="episodes">&nbsp;&nbsp;EPISODES</div>
     <div class="nav-item" data-view="scriptwriting">&nbsp;&nbsp;SCRIPTWRITING</div>
+    <div class="nav-item" data-view="book">&nbsp;&nbsp;BOOK</div>
     <div class="nav-sep"></div>
     <div class="nav-group">WORKSHOP</div>
     <div class="nav-item" data-view="room">&gt; AGENT ROOM</div>
@@ -842,20 +876,34 @@ const VIEWS = {
 
   /* ── MEMORY ─────────────────────────────────────────────────────────── */
   async memory() {
-    const d = await GET('/api/memory');
     setPanel(`
       <div class="view-header">
-        <span class="view-title">WORKING MEMORY</span>
-        <span class="c-dim">${esc(d.size_display)} &nbsp;|&nbsp; ${d.episodic_count} archive(s)</span>
+        <span class="view-title">AGENT CONVERSATIONS</span>
+        <div class="inline-btns">
+          <button class="b-dim" style="font-size:10px" onclick="toggleWorkingMemoryPanel()">WORKING MEMORY ▾</button>
+          <button onclick="loadConversationLog()" style="font-size:10px">↻ REFRESH</button>
+        </div>
       </div>
+
+      <!-- Collapsible Working Memory panel -->
+      <div id="wm-panel" style="display:none;margin-bottom:12px;padding:10px;border:1px solid #1a1a1a;background:#050505">
+        <div class="c-dim" style="font-size:10px;letter-spacing:1px;margin-bottom:6px">WORKING MEMORY</div>
+        <div id="wm-meta" class="c-dim" style="font-size:10px;margin-bottom:6px"></div>
+        <textarea id="mem-ta" rows="12" style="width:100%;box-sizing:border-box"></textarea>
+        <div class="inline-btns mt8">
+          <button onclick="saveMem()">SAVE</button>
+          <button onclick="compressMem()">COMPRESS WITH ARCHIVIST</button>
+        </div>
+      </div>
+
       <div class="sep"></div>
-      <textarea id="mem-ta" rows="28"></textarea>
-      <div class="inline-btns mt8">
-        <button onclick="saveMem()">SAVE</button>
-        <button onclick="compressMem()">COMPRESS WITH ARCHIVIST</button>
+
+      <!-- Conversation log -->
+      <div id="conv-log-container">
+        <div class="c-dim" style="font-size:11px;padding:20px 0">Loading conversations…</div>
       </div>
     `);
-    $('mem-ta').value = d.content || '';
+    await loadConversationLog();
   },
 
   /* ── SCENES ─────────────────────────────────────────────────────────── */
@@ -1055,7 +1103,10 @@ const VIEWS = {
   async objects()    { await loadRoster('object', 'OBJECTS'); },
 
   /* ── EVENTS ──────────────────────────────────────────────────────────── */
-  async events()     { await loadRoster('event',  'EVENTS');  },
+  async events()     { await loadEventRoster(); },
+
+  /* ── CONCEPTS ────────────────────────────────────────────────────────── */
+  async concepts()   { await loadConceptRoster(); },
 
   /* ── AGENT TEAM ──────────────────────────────────────────────────────── */
   async agentteam()  { await loadAgentTeam(); },
@@ -1067,16 +1118,19 @@ const VIEWS = {
   async scriptwriting() { await VIEWS.screenplay(); },
 
   /* ── SYNOPSIS ────────────────────────────────────────────────────────── */
-  async synopsis()   { await loadRoster('synopsis',   'SYNOPSES');    },
+  async synopsis()   { await loadDevRoster('synopsis',   'SYNOPSES',    'treatment', `Write a professional synopsis. Present tense, active voice, 500–800 words. Cover the full story arc: protagonist's world, inciting incident, key turning points, all-is-lost, and resolution. No scene headings. No script format. Prose only.`); },
 
   /* ── TREATMENTS ──────────────────────────────────────────────────────── */
-  async treatments() { await loadRoster('treatment',  'TREATMENTS');  },
+  async treatments() { await loadDevRoster('treatment',  'TREATMENTS',  'treatment', `Write a complete Hollywood-standard film treatment with all 7 sections: title block, logline (25–35 words), premise, the world, character portraits (protagonist/antagonist/supporting), tone & comps, and the full story in three acts of present-tense prose. No script format. No sluglines. This is a reading experience for producers.`); },
 
   /* ── BEAT SHEETS ─────────────────────────────────────────────────────── */
-  async beatsheets() { await loadRoster('beat_sheet', 'BEAT SHEETS'); },
+  async beatsheets() { await loadDevRoster('beat_sheet', 'BEAT SHEETS', 'structure', `Write a complete Save the Cat beat sheet using all 15 beats with approximate page numbers (for a 110-page feature): Opening Image, Theme Stated, Set-Up, Catalyst, Debate, Break Into Two, B Story, Fun and Games, Midpoint, Bad Guys Close In, All Is Lost, Dark Night of the Soul, Break Into Three, Finale, Final Image. Write each beat as specific prose description — not script format. Use actual character names and story events from the canon.`); },
 
   /* ── LOGLINES ────────────────────────────────────────────────────────── */
-  async loglines()   { await loadRoster('logline',    'LOGLINES');    },
+  async loglines()   { await loadDevRoster('logline',    'LOGLINES',    'logline',   `Generate a complete pitch document: (1) five logline variations from different angles, each 25–35 words, (2) the strongest elevator pitch in 3–4 paragraphs, (3) tone and comparable films, (4) the single most marketable element of this story, (5) title analysis and alternatives.`); },
+
+  /* ── BOOK ─────────────────────────────────────────────────────────────── */
+  async book()       { await loadBook(); },
 
   /* ── POPULATE KB ─────────────────────────────────────────────────────── */
   async devpopulate() { await loadDevPopulate(); },
@@ -1175,7 +1229,8 @@ const VIEWS = {
         <div id="graph-info"></div>
         <div id="graph-legend">
           <div style="color:var(--dim);letter-spacing:1px;margin-bottom:4px;font-size:10px">TYPES</div>
-          <div class="legend-row"><div class="legend-dot" style="background:#00FF00"></div><span style="color:#555;font-size:10px">CHARACTER</span></div>
+          <div class="legend-row"><div class="legend-dot" style="background:#00FF00"></div><span style="color:#555;font-size:10px">LEAD CHARACTER</span></div>
+          <div class="legend-row"><div class="legend-dot" style="background:#00FF00;opacity:0.6"></div><span style="color:#555;font-size:10px">SUPPORTING CHARACTER</span></div>
           <div class="legend-row"><div class="legend-dot" style="background:#FFFF00"></div><span style="color:#555;font-size:10px">LOCATION</span></div>
           <div class="legend-row"><div class="legend-dot" style="background:#FF9900"></div><span style="color:#555;font-size:10px">OBJECT</span></div>
           <div class="legend-row"><div class="legend-dot" style="background:#FF4444"></div><span style="color:#555;font-size:10px">EVENT</span></div>
@@ -1362,6 +1417,9 @@ function selectSection(idx, secs, locked) {
 
   ed.innerHTML = buildSectionEditor(s, isLocked);
 
+  // Populate section agent selector
+  _populateAgentSelect('sec-agent-type', 'writer');
+
   // Populate section team selector
   const secTeamSel = $('sec-team-sel');
   if (secTeamSel && (S._teams || []).length) {
@@ -1418,13 +1476,7 @@ function buildSectionEditor(s, isLocked) {
           <td style="width:80px;color:var(--dim);padding:4px 0;font-size:11px">AGENT</td>
           <td>
             <select id="sec-agent-type" style="width:100%">
-              <option value="writer">WRITER — draft / develop content</option>
-              <option value="character">CHARACTER — deepen characters</option>
-              <option value="lore">LORE — expand world-building</option>
-              <option value="structure">STRUCTURE — beat sheets, arcs</option>
-              <option value="editor">EDITOR — revise and tighten</option>
-              <option value="critic">CRITIC — critique and flag issues</option>
-              <option value="producer">PRODUCER — commercial perspective</option>
+              <option value="writer">WRITER</option>
             </select>
           </td>
         </tr>
@@ -1686,7 +1738,7 @@ const WB_META = {
   lore:      { label: 'LORE & HISTORY', desc: 'World history, mythology, backstory — the deep past that shapes the story',                  color: 'var(--green)'  },
   logic:     { label: 'WORLD LOGIC',    desc: 'Rules: magic, technology, physics — how this world fundamentally works',                     color: 'var(--yellow)' },
   tone:      { label: 'TONE & STYLE',   desc: 'Visual language, cinematic approach, genre influences, mood and atmosphere',                  color: '#FF9900'       },
-  structure: { label: 'STRUCTURE',      desc: 'Three-act breakdown, inciting incident, midpoint, climax, key sequences',                     color: '#FF4488'       },
+  structure: { label: 'STORY',          desc: 'Prose summary of the full story arc — three acts, inciting incident, midpoint, climax, key turns. No script format.', color: '#FF4488'       },
   rules:     { label: 'WORLD RULES',    desc: 'Non-negotiable constraints — injected into every agent call as mandatory law',                color: 'var(--red)'    },
 };
 
@@ -1712,11 +1764,6 @@ async function loadWBSection(sectionId) {
   const content = d.content || '';
   const updated = d.updated_at ? d.updated_at.slice(0, 16).replace('T', ' ') : null;
 
-  // Build agent buttons
-  const agents = ['writer', 'editor', 'lore', 'critic', 'archivist'];
-  const agentBtns = agents.map(a =>
-    `<button style="font-size:10px;padding:3px 8px" onclick="wbReviseSection('${sectionId}','${a}')">${a.toUpperCase()}</button>`
-  ).join('');
 
   const isRules = sectionId === 'rules';
 
@@ -1845,8 +1892,10 @@ async function loadWBSection(sectionId) {
     <!-- AGENT SELECTOR (hidden by default) -->
     <div id="wb-agent-panel" style="display:none;margin-top:12px">
       <div class="c-dim" style="font-size:10px;margin-bottom:6px">SINGLE AGENT:</div>
-      <div class="inline-btns">${agentBtns}</div>
-      <textarea id="wb-agent-task" rows="3" style="margin-top:8px;width:100%;box-sizing:border-box"
+      <select id="wb-agent-select" style="width:100%;margin-bottom:8px">
+        <option value="writer">WRITER</option>
+      </select>
+      <textarea id="wb-agent-task" rows="3" style="width:100%;box-sizing:border-box"
         placeholder="Task for the agent (e.g. 'Expand the lore section with more detail about the origin myth')"></textarea>
       <div class="inline-btns mt8">
         <button class="b-cyan" onclick="wbSubmitAgent('${sectionId}')">LAUNCH</button>
@@ -1898,7 +1947,10 @@ async function wbSave(sectionId) {
 
 function wbRunAgentOnSection(sectionId) {
   const ap = $('wb-agent-panel');
-  if (ap) ap.style.display = ap.style.display === 'none' ? 'block' : 'none';
+  if (!ap) return;
+  const isVisible = ap.style.display !== 'none' && ap.style.display !== '';
+  ap.style.display = isVisible ? 'none' : 'block';
+  if (!isVisible) _populateAgentSelect('wb-agent-select', 'writer');
 }
 
 async function wbReviseSection(sectionId, agentType) {
@@ -1926,12 +1978,10 @@ async function wbReviseSection(sectionId, agentType) {
 }
 
 async function wbSubmitAgent(sectionId) {
-  const ta       = $('wb-agent-task');
-  const task     = ta ? ta.value.trim() : '';
-  // Find which agent button was last selected — default to writer
+  const ta        = $('wb-agent-task');
+  const task      = ta ? ta.value.trim() : '';
   if (!task) { toast('Enter a task.', true); return; }
-  // prompt for agent type
-  const agentType = prompt('Agent type? (writer / editor / lore / critic / archivist)', 'writer') || 'writer';
+  const agentType = ($('wb-agent-select') || {}).value || 'writer';
   await wbReviseSection(sectionId, agentType);
 }
 
@@ -1988,7 +2038,7 @@ async function wbExtractEntities(sectionId, content) {
 function wbOpenEntity(slug, docType) {
   if (!slug || !docType) return;
   // Map to appropriate view
-  const viewMap = { character: 'characters', creature: 'characters', location: 'locations', object: 'objects', event: 'events' };
+  const viewMap = { character: 'characters', creature: 'characters', location: 'locations', object: 'objects', event: 'events', concept: 'concepts' };
   const v = viewMap[docType] || 'characters';
   go(v).then(() => setTimeout(() => openRosterDoc(slug, docType), 300));
 }
@@ -2064,6 +2114,21 @@ function _populateWbTeamSelect(selId) {
       `<option value="${esc(t.id)}">${esc(t.label)} — ${esc(t.description)}</option>`
     ).join('');
   }).catch(() => { if (sel) sel.innerHTML = '<option value="the_room">The Room</option>'; });
+}
+
+function _populateAgentSelect(selId, selectedKey) {
+  const sel = $(selId);
+  if (!sel) return;
+  const render = agents => {
+    sel.innerHTML = agents.map(a =>
+      `<option value="${esc(a.key)}"${a.key === selectedKey ? ' selected' : ''}>${esc(a.label)}</option>`
+    ).join('');
+  };
+  if ((S._agents || []).length) { render(S._agents); return; }
+  GET('/api/agents').then(d => {
+    S._agents = d.agents || [];
+    render(S._agents);
+  }).catch(() => { if (sel) sel.innerHTML = '<option value="writer">WRITER</option>'; });
 }
 
 function wbRunTeam(sectionId) {
@@ -3025,14 +3090,7 @@ function renderDocuments(docs, tab) {
     `<button class="${tab===t?'active-tab':''}" onclick="setDocTab('${t}')">${typeLabel[t]||t.toUpperCase()}</button>`
   ).join('');
 
-  const agentOpts = [
-    ['treatment','TREATMENT WRITER'],
-    ['logline','PITCH SPECIALIST'],
-    ['structure','STRUCTURE'],
-    ['character','CHARACTER'],
-    ['lore','LORE / WORLD'],
-    ['writer','WRITER'],
-  ].map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
+  const agentOpts = '<option value="treatment">TREATMENT WRITER</option>';
 
   const docTypeOpts = docTypes.map(dt =>
     `<option value="${esc(dt.id)}">${esc(dt.label)}</option>`
@@ -3121,7 +3179,9 @@ function setDocTab(tab) {
 
 function toggleGenForm() {
   const f = $('gen-form');
-  if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (!f) return;
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') _populateAgentSelect('gen-agent', 'treatment');
 }
 
 async function doGenerateDoc() {
@@ -3450,7 +3510,7 @@ async function saveDevPopSynthesis(synthId) {
   if (!content.trim()) { toast('No synthesis content to save.', true); return; }
 
   const docType = prompt(
-    'Save as document type:\n\ncharacter / creature / location / object / event / world / bible / treatment',
+    'Save as document type:\n\ncharacter / creature / location / object / event / concept / world / bible / treatment',
     'world'
   );
   if (!docType?.trim()) return;
@@ -3473,6 +3533,7 @@ async function saveDevPopSynthesis(synthId) {
 // Node colour per type
 const NODE_COLORS = {
   character:    '#00FF00',
+  creature:     '#00FF00',   // creatures = supporting characters, same green
   location:     '#FFFF00',
   object:       '#FF9900',
   event:        '#FF4444',
@@ -3480,6 +3541,12 @@ const NODE_COLORS = {
   concept:      '#FF00FF',
   theme:        '#AA88FF',
   technology:   '#00FFFF',   // kept for backward-compat with older graphs
+};
+
+// Human-readable labels for node types (info panel + filter chips)
+const NODE_TYPE_LABELS = {
+  character: 'LEAD CHARACTER',
+  creature:  'SUPPORTING CHARACTER',
 };
 
 // Radius per weight
@@ -3544,17 +3611,20 @@ function buildTypeFilters(nodes) {
   if (!container) return;
   container.style.display = 'flex';
 
-  const types = [...new Set(nodes.map(n => n.type || 'concept'))];
+  // Normalise creature → character for filter chips (they're the same group)
+  const rawTypes  = [...new Set(nodes.map(n => n.type || 'concept'))];
+  const chipTypes = [...new Set(rawTypes.map(t => t === 'creature' ? 'character' : t))];
+
   // Keep existing "FILTER:" label, rebuild chips
   const existing = container.querySelectorAll('.type-chip');
   existing.forEach(el => el.remove());
 
-  types.forEach(type => {
+  chipTypes.forEach(type => {
     const chip = document.createElement('span');
     chip.className = 'type-chip';
     chip.style.color  = NODE_COLORS[type] || '#888';
     chip.style.borderColor = NODE_COLORS[type] || '#888';
-    chip.textContent  = type.toUpperCase();
+    chip.textContent  = NODE_TYPE_LABELS[type] || type.toUpperCase();
     chip.dataset.type = type;
     if (!_activeTypes.has(type)) chip.classList.add('off');
     chip.addEventListener('click', () => toggleTypeFilter(type, chip));
@@ -3563,24 +3633,27 @@ function buildTypeFilters(nodes) {
 }
 
 function toggleTypeFilter(type, chip) {
-  if (_activeTypes.has(type)) {
-    _activeTypes.delete(type);
-    chip.classList.add('off');
-  } else {
-    _activeTypes.add(type);
-    chip.classList.remove('off');
-  }
+  // creature is grouped with character
+  const aliases = type === 'character' ? ['character', 'creature'] : [type];
+  const wasOn = _activeTypes.has(type);
+  aliases.forEach(t => wasOn ? _activeTypes.delete(t) : _activeTypes.add(t));
+  wasOn ? chip.classList.add('off') : chip.classList.remove('off');
   applyTypeFilter();
+}
+
+function _filterType(t) {
+  // creature is grouped under the character filter
+  return t === 'creature' ? 'character' : (t || 'concept');
 }
 
 function applyTypeFilter() {
   if (!_graphSvg) return;
   _graphSvg.selectAll('.g-node')
-    .style('opacity', d => _activeTypes.has(d.type || 'concept') ? 1 : 0.08);
+    .style('opacity', d => _activeTypes.has(_filterType(d.type)) ? 1 : 0.08);
   _graphSvg.selectAll('.g-link')
     .style('opacity', d => {
-      const sType = (d.source.type || 'concept');
-      const tType = (d.target.type || 'concept');
+      const sType = _filterType(d.source.type);
+      const tType = _filterType(d.target.type);
       return (_activeTypes.has(sType) && _activeTypes.has(tType)) ? 1 : 0.05;
     });
 }
@@ -3737,6 +3810,7 @@ const _GRAPH_TYPE_TO_DOC = {
   creature:  'creature',
   object:    'object',
   event:     'event',
+  concept:   'concept',
 };
 // Map doc_type to the nav view name for the OPEN button
 const _DOC_TO_VIEW = {
@@ -3745,6 +3819,7 @@ const _DOC_TO_VIEW = {
   location:  'locations',
   object:    'objects',
   event:     'events',
+  concept:   'concepts',
   bible:     'bible',
 };
 
@@ -3771,9 +3846,11 @@ async function showNodeInfo(node, links) {
     return `<div class="gi-edge">${arrow} <em>${esc(l.label||'')}</em> <span>${esc(other)}</span></div>`;
   }).join('');
 
+  const typeLabel = NODE_TYPE_LABELS[node.type] || (node.type || 'entity').toUpperCase();
+
   // Show basic info immediately
   panel.innerHTML = `
-    <div class="gi-type" style="color:${color}">${esc((node.type || 'entity').toUpperCase())}</div>
+    <div class="gi-type" style="color:${color}">${esc(typeLabel)}</div>
     <div class="gi-label">${esc(node.label)}</div>
     <div class="gi-desc">${esc(node.description || '')}</div>
     ${connected.length ? `<div class="gi-edges">${edgeHtml}</div>` : ''}
@@ -3802,15 +3879,37 @@ async function showNodeInfo(node, links) {
     } catch(_) {}
 
     const viewName = _DOC_TO_VIEW[docType] || docType + 's';
-    const tabArg   = (docType === 'creature') ? `,'character'` : '';
+    const subtitle = d.meta?.subtitle ? `<div style="font-size:10px;color:var(--dim);margin-top:-4px;margin-bottom:6px">${esc(d.meta.subtitle)}</div>` : '';
 
     extras.innerHTML = `
       <div style="margin-top:8px;border-top:1px solid #1e1e1e;padding-top:8px">
         ${imgHtml}
-        <button class="gi-open" onclick="go('${viewName}');setTimeout(()=>openRosterDoc('${esc(node.id)}','${esc(docType)}')${tabArg},300)">
+        ${subtitle}
+        <button class="gi-open" onclick="go('${viewName}');setTimeout(()=>openRosterDoc('${esc(node.id)}','${esc(docType)}'),300)">
           OPEN DOCUMENT →
         </button>
+        <div style="margin-top:10px;padding-top:8px;border-top:1px solid #181818">
+          <div style="font-size:9px;color:var(--dim);letter-spacing:1px;margin-bottom:6px">ADD CONNECTION</div>
+          <select id="gi-conn-type" style="width:100%;margin-bottom:4px;font-size:10px"
+                  onchange="loadGiConnTargets('${esc(node.id)}','${esc(docType)}')">
+            <option value="character">Lead Character</option>
+            <option value="creature">Supporting Character</option>
+            <option value="location">Location</option>
+            <option value="object">Object</option>
+            <option value="event">Event</option>
+            <option value="concept">Concept</option>
+          </select>
+          <select id="gi-conn-target" style="width:100%;margin-bottom:4px;font-size:10px">
+            <option>Loading…</option>
+          </select>
+          <input id="gi-conn-label" type="text" style="width:100%;margin-bottom:4px;font-size:10px"
+                 placeholder="relation label (e.g. guides, loves, contains)">
+          <button class="b-cyan" style="width:100%;font-size:9px;padding:3px 0"
+                  onclick="addGiConnection('${esc(node.id)}','${esc(docType)}')">+ ADD CONNECTION</button>
+        </div>
       </div>`;
+
+    loadGiConnTargets(node.id, docType);
   } catch(_) {}
 }
 
@@ -3818,6 +3917,41 @@ function hideNodeInfo() {
   const panel = $('graph-info');
   if (panel) panel.style.display = 'none';
   if (_graphSvg) _graphSvg.selectAll('.g-node').classed('selected', false);
+}
+
+async function loadGiConnTargets(nodeId, nodeDocType) {
+  const typeEl = $('gi-conn-type');
+  const docEl  = $('gi-conn-target');
+  if (!typeEl || !docEl) return;
+  const targetType = typeEl.value;
+  docEl.innerHTML = '<option>Loading…</option>';
+  try {
+    const d    = await GET(`/api/documents?type=${targetType}`);
+    const docs = (d.documents || []).filter(dc => !(dc.slug === nodeId && targetType === nodeDocType));
+    docEl.innerHTML = docs.length
+      ? docs.map(dc => `<option value="${esc(dc.slug)}" data-title="${esc(dc.title)}">${esc(dc.title)}</option>`).join('')
+      : '<option value="">— none available —</option>';
+  } catch(ex) { docEl.innerHTML = '<option>Error loading</option>'; }
+}
+
+async function addGiConnection(nodeId, nodeDocType) {
+  const typeEl  = $('gi-conn-type');
+  const docEl   = $('gi-conn-target');
+  const labelEl = $('gi-conn-label');
+  if (!typeEl || !docEl) return;
+  const targetType  = typeEl.value;
+  const targetSlug  = docEl.value;
+  const targetTitle = docEl.options[docEl.selectedIndex]?.getAttribute('data-title') || targetSlug;
+  const label       = (labelEl?.value || '').trim() || 'related to';
+  if (!targetSlug || targetSlug === '— none available —') { toast('Select a target entity', true); return; }
+  try {
+    await POST(`/api/documents/${nodeDocType}/${nodeId}/relations`,
+               { target_type: targetType, target_slug: targetSlug, target_title: targetTitle, label });
+    toast(`Connection added: ${label} → ${targetTitle}`);
+    if (labelEl) labelEl.value = '';
+    // Refresh graph to show the new edge
+    loadKnowledgeGraph(true);
+  } catch(ex) { toast(ex.message || 'Failed to add connection', true); }
 }
 
 function graphZoom(factor) {
@@ -3878,6 +4012,111 @@ function buildEntityTable(nodes, edges) {
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONVERSATION LOG
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+async function toggleWorkingMemoryPanel() {
+  const panel = $('wm-panel');
+  if (!panel) return;
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    try {
+      const d = await GET('/api/memory');
+      const ta = $('mem-ta');
+      if (ta) ta.value = d.content || '';
+      const meta = $('wm-meta');
+      if (meta) meta.textContent = `${d.size_display || ''} · ${d.episodic_count || 0} archive(s)`;
+    } catch(_) {}
+  }
+}
+
+async function loadConversationLog() {
+  const container = $('conv-log-container');
+  if (!container) return;
+  container.innerHTML = '<div class="c-dim" style="font-size:11px;padding:12px 0">Loading…</div>';
+  try {
+    const d       = await GET('/api/conversation-log');
+    const entries = d.entries || [];
+    if (!entries.length) {
+      container.innerHTML = '<div class="c-dim" style="font-size:11px;padding:12px 0">No agent conversations yet. Run an agent or a team to get started.</div>';
+      return;
+    }
+    container.innerHTML = entries.map(e => renderConvEntry(e)).join('');
+  } catch(err) {
+    container.innerHTML = `<div class="c-red" style="font-size:11px">${esc(err.message)}</div>`;
+  }
+}
+
+function renderConvEntry(e) {
+  const ts       = (e.timestamp || '').slice(0, 16).replace('T', ' ');
+  const isSession = e.source === 'session';
+
+  if (isSession) {
+    // Multi-agent deliberation session
+    const turns   = e.turns || [];
+    const team    = esc(e.team || 'team');
+    const heading = e.heading ? ` — <span style="color:var(--cyan)">${esc(e.heading)}</span>` : '';
+    const task    = (e.task || '').split('\n')[0].slice(0, 140);
+    const tokStr  = e.total_tokens ? `${e.total_tokens.toLocaleString()} tok` : '';
+    const entryId = 'ce_' + esc(e.id);
+
+    const turnsHtml = turns.map(t => {
+      const agentLabel = t.agent || t.key || 'AGENT';
+      const content    = (t.content || '').trim();
+      return `<div style="margin-bottom:14px">
+        <div style="font-size:10px;letter-spacing:1px;color:var(--yellow);margin-bottom:4px">${esc(agentLabel)}</div>
+        <div style="font-size:12px;line-height:1.6;white-space:pre-wrap;color:var(--fg)">${esc(content)}</div>
+      </div>`;
+    }).join('<div style="border-top:1px solid #111;margin:10px 0"></div>');
+
+    return `<div class="card" style="margin-bottom:12px;border-left:3px solid var(--cyan)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;cursor:pointer"
+           onclick="this.parentElement.querySelector('.conv-body').style.display=this.parentElement.querySelector('.conv-body').style.display==='none'?'block':'none'">
+        <div>
+          <span style="font-size:10px;letter-spacing:1px;color:var(--cyan)">TEAM SESSION</span>
+          <span class="c-dim" style="margin-left:6px;font-size:10px">${team}${heading}</span>
+        </div>
+        <div style="font-size:10px;color:var(--dim);white-space:nowrap;margin-left:10px">${ts} &nbsp; ${tokStr}</div>
+      </div>
+      <div style="font-size:11px;color:var(--dim);margin-bottom:8px">${esc(task)}${task.length < (e.task||'').split('\n')[0].length ? '…' : ''}</div>
+      <div class="conv-body" style="display:none">
+        <div style="border-top:1px solid #1a1a1a;padding-top:10px;margin-top:4px">${turnsHtml}</div>
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin-top:4px">${turns.length} agent turn(s) — click header to expand</div>
+    </div>`;
+
+  } else {
+    // Single-agent proposal
+    const agent    = esc(e.agent || 'AGENT');
+    const status   = e.status || 'PENDING';
+    const stColor  = status === 'APPROVED' ? 'var(--green)' : status === 'REJECTED' ? 'var(--red)' : 'var(--yellow)';
+    const context  = esc((e.context || '').replace(/\\/g, '/'));
+    const task     = (e.task || '').slice(0, 120);
+    const content  = (e.content || '').trim();
+    const preview  = content.slice(0, 300);
+    const hasMore  = content.length > 300;
+
+    return `<div class="card" style="margin-bottom:10px;border-left:3px solid #333">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;cursor:pointer"
+           onclick="this.parentElement.querySelector('.conv-body').style.display=this.parentElement.querySelector('.conv-body').style.display==='none'?'block':'none'">
+        <div>
+          <span style="font-size:10px;letter-spacing:1px;color:var(--fg)">${agent}</span>
+          <span style="margin-left:8px;font-size:9px;padding:1px 5px;border:1px solid ${stColor};color:${stColor}">${status}</span>
+        </div>
+        <div style="font-size:10px;color:var(--dim);white-space:nowrap;margin-left:10px">${ts}</div>
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin-bottom:4px">${context}</div>
+      <div style="font-size:11px;color:#888;margin-bottom:6px">${esc(task)}${task.length < (e.task||'').length ? '…' : ''}</div>
+      <div class="conv-body" style="display:none">
+        <div style="border-top:1px solid #1a1a1a;padding-top:8px;margin-top:4px;font-size:12px;line-height:1.6;white-space:pre-wrap;color:var(--fg)">${esc(content)}</div>
+      </div>
+      <div style="font-size:10px;color:var(--dim)">Click to expand · ${content.length.toLocaleString()} chars</div>
+    </div>`;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4137,6 +4376,107 @@ async function doCreateProject() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   UNDO PANEL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SERVER STATUS / CONTROL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let _srvAlive = null;
+
+function _setSrvState(alive) {
+  if (_srvAlive === alive) return;
+  _srvAlive = alive;
+  const dot = $('srv-dot'), lbl = $('srv-label'), btn = $('srv-btn');
+  if (!dot) return;
+  if (alive) {
+    dot.style.background = '#00cc44';
+    lbl.textContent = 'LIVE';
+    lbl.style.color = '#00cc44';
+    btn.textContent = 'STOP';
+    btn.style.borderColor = '#ff4444';
+    btn.style.color = '#ff4444';
+  } else {
+    dot.style.background = '#ff4444';
+    lbl.textContent = 'OFFLINE';
+    lbl.style.color = '#ff4444';
+    btn.textContent = 'START';
+    btn.style.borderColor = '#00cc44';
+    btn.style.color = '#00cc44';
+  }
+}
+
+async function _checkServer() {
+  try {
+    const r = await fetch('/api/ping', { signal: AbortSignal.timeout(2500) });
+    _setSrvState(r.ok);
+  } catch(_) {
+    _setSrvState(false);
+  }
+}
+
+async function serverAction() {
+  if (_srvAlive) {
+    if (!confirm('Stop the Flask server? The page will go offline until you restart it from the terminal.')) return;
+    try { await fetch('/api/server/stop', { method: 'POST' }); } catch(_) {}
+    _setSrvState(false);
+    toast('Server stopped. Run: cd web && python app.py to restart.');
+  } else {
+    toast('Run this in your terminal to start the server:\n  cd web && python app.py');
+  }
+}
+
+// Poll every 6 seconds; check immediately on load
+setInterval(_checkServer, 6000);
+setTimeout(_checkServer, 800);
+
+async function toggleUndoPanel() {
+  const panel = $('undo-panel');
+  if (!panel) return;
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) await refreshUndoList();
+}
+
+async function refreshUndoList() {
+  const listEl = $('undo-list');
+  if (!listEl) return;
+  try {
+    const d     = await GET('/api/undo?n=15');
+    const snaps = d.snapshots || [];
+    if (!snaps.length) {
+      listEl.innerHTML = '<div class="c-dim" style="font-size:11px">No undo history yet.</div>';
+      return;
+    }
+    listEl.innerHTML = snaps.map(s => {
+      const t            = (s.timestamp || '').slice(0, 16).replace('T', ' ');
+      const isPreRestore = (s.label || '').startsWith('[pre-restore]');
+      return `<div style="padding:7px 0;border-bottom:1px solid #1a1a1a">
+        <div style="font-size:11px;color:${isPreRestore ? 'var(--dim)' : 'var(--fg)'};word-break:break-word">${esc(s.label || '')}</div>
+        <div style="font-size:10px;color:var(--dim);margin-top:2px">${esc(s.rel_path || '')} · ${t}</div>
+        <button class="b-yellow" style="font-size:9px;padding:1px 6px;margin-top:4px"
+          onclick="doRestore('${esc(s.id)}')">RESTORE</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    listEl.innerHTML = `<div class="c-red" style="font-size:11px">${esc(e.message)}</div>`;
+  }
+}
+
+async function doRestore(snapId) {
+  if (!confirm('Restore this snapshot? The current state will be saved first so you can undo the undo.')) return;
+  try {
+    await POST(`/api/undo/${snapId}/restore`);
+    toast('Restored. Refreshing…');
+    $('undo-panel').style.display = 'none';
+    // Re-render whatever view is active
+    if (S._wbSection) await loadWBSection(S._wbSection);
+    else if (S.nav)   await go(S.nav);
+  } catch(e) { toast(e.message, true); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    TOKEN DISPLAY
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -4253,6 +4593,344 @@ async function loadRoster(docType, label) {
   S._rosterLabel = label;
 }
 
+// ─── Dev roster (treatment / synopsis / logline / beat sheet) ───────────────
+// Wraps loadRoster with a "WRITE FROM KB" one-click button.
+
+async function loadDevRoster(docType, label, agentKey, defaultTask) {
+  S._devRoster = { docType, label, agentKey, defaultTask };
+  const d    = await GET(`/api/documents?type=${docType}`);
+  const docs = d.documents || [];
+
+  const items = docs.map(doc => `
+    <div class="roster-item" id="ri-${esc(doc.slug)}"
+         onclick="openRosterDoc('${esc(doc.slug)}', '${esc(docType)}')">
+      <div class="c-white" style="font-size:12px;margin-bottom:2px">${esc(doc.title)}</div>
+      <div class="c-dim" style="font-size:10px">${esc((doc.created_at||'').slice(0,10))}</div>
+    </div>`).join('');
+
+  setPanel(`
+    <div class="view-header">
+      <span class="view-title">${esc(label)}</span>
+      <div class="inline-btns">
+        <button class="b-yellow" onclick="writeFromKB()">⚡ WRITE FROM KB</button>
+        <button onclick="newRosterDoc('${esc(docType)}','${esc(label)}')">+ NEW</button>
+        <button class="b-cyan" onclick="generateRosterDoc('${esc(docType)}','${esc(label)}')">GENERATE ONE</button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div style="display:flex;gap:0;min-height:540px">
+      <div id="roster-nav"
+           style="width:185px;flex-shrink:0;border-right:1px solid #1e1e1e;overflow-y:auto;padding:4px 0">
+        ${docs.length === 0
+          ? `<div class="c-dim" style="padding:12px;font-size:11px">
+               No ${label.toLowerCase()} yet.<br><br>
+               Click ⚡ WRITE FROM KB for a one-click generation.
+             </div>`
+          : items}
+      </div>
+      <div id="roster-editor" style="flex:1;padding:14px;overflow-y:auto">
+        <div class="c-dim" style="padding-top:20px">
+          Select a document, or click ⚡ WRITE FROM KB to generate from your knowledge base.
+        </div>
+      </div>
+    </div>
+  `);
+
+  S._rosterType  = docType;
+  S._rosterLabel = label;
+}
+
+async function writeFromKB() {
+  const cfg = S._devRoster;
+  if (!cfg) return;
+  const ed = $('roster-editor');
+  if (ed) {
+    ed.innerHTML = `
+      <div style="padding:20px 0">
+        <div class="c-yellow" style="font-size:11px;letter-spacing:1px;margin-bottom:12px">⚡ WRITE FROM KB</div>
+        <div class="c-dim" style="font-size:11px;margin-bottom:10px">
+          The agent will read your full knowledge base and generate a complete ${esc(cfg.label.toLowerCase().replace(/s$/,''))} now.
+          Edit the task below or click GENERATE to use the default.
+        </div>
+        <textarea id="wfkb-task" rows="6" style="font-size:11px">${esc(cfg.defaultTask)}</textarea>
+        <div style="margin:6px 0;display:flex;align-items:center;gap:8px">
+          <span class="c-dim" style="font-size:10px">TITLE</span>
+          <input id="wfkb-title" type="text" style="flex:1;font-size:11px"
+                 value="${esc(cfg.label.charAt(0) + cfg.label.slice(1).toLowerCase().replace(/s$/,'') + ' v1')}">
+        </div>
+        <div class="inline-btns mt8">
+          <button class="b-yellow" onclick="doWriteFromKB()">GENERATE</button>
+          <button onclick="loadDevRoster('${esc(cfg.docType)}','${esc(cfg.label)}','${esc(cfg.agentKey)}',S._devRoster.defaultTask)">CANCEL</button>
+        </div>
+        <div id="wfkb-progress" style="display:none;margin-top:14px">
+          <div class="c-dim" style="font-size:10px;margin-bottom:6px" id="wfkb-status">GENERATING...</div>
+          <div id="wfkb-preview" style="font-size:11px;line-height:1.6;white-space:pre-wrap;
+               max-height:400px;overflow-y:auto;border:1px solid #1a1a1a;padding:10px;background:#020202"></div>
+        </div>
+      </div>`;
+    setTimeout(() => { const t = $('wfkb-task'); if (t) t.focus(); }, 50);
+  }
+}
+
+async function doWriteFromKB() {
+  const cfg   = S._devRoster;
+  if (!cfg) return;
+  const task  = ($('wfkb-task')  || {}).value?.trim() || cfg.defaultTask;
+  const title = ($('wfkb-title') || {}).value?.trim() || cfg.label + ' v1';
+
+  const prog   = $('wfkb-progress');
+  const status = $('wfkb-status');
+  if (prog) prog.style.display = 'block';
+  if (status) status.textContent = `WRITING ${cfg.label}...`;
+
+  setLoading(true, `WRITING ${cfg.label}...`);
+  try {
+    const r = await POST('/api/agents/generate-doc', {
+      agent:    cfg.agentKey,
+      doc_type: cfg.docType,
+      title:    title,
+      task:     task,
+      context:  { document_type: cfg.docType },
+    });
+    if (status) status.textContent = `COMPLETE — ${r.meta?.title}`;
+    toast(`Generated: ${r.meta?.title}`);
+    updateToks();
+    await loadDevRoster(cfg.docType, cfg.label, cfg.agentKey, cfg.defaultTask);
+    if (r.meta?.slug) setTimeout(() => openRosterDoc(r.meta.slug, cfg.docType), 150);
+  } catch(e) { toast(e.message, true); if (status) status.textContent = 'ERROR'; }
+  finally { setLoading(false); }
+}
+
+// ─── Events roster (custom: drag-to-reorder + categories) ───────────────────
+
+async function loadEventRoster() {
+  const d    = await GET('/api/documents?type=event');
+  const docs = d.documents || [];
+
+  const groups = { backstory: [], story: [], '': [] };
+  docs.forEach(doc => {
+    const cat = doc.category || '';
+    const key = cat === 'backstory' ? 'backstory' : cat === 'story' ? 'story' : '';
+    groups[key].push(doc);
+  });
+
+  function groupHtml(key, items) {
+    if (!items.length) return '';
+    const lbl = key === 'backstory' ? 'BACKSTORY' : key === 'story' ? 'STORY EVENTS' : 'UNCATEGORIZED';
+    return `
+      <div style="padding:6px 8px 2px;font-size:9px;letter-spacing:2px;color:var(--dim);
+                  border-top:1px solid #151515;margin-top:4px">${lbl}</div>
+      ${items.map(doc => `
+        <div class="roster-item event-item" id="ri-${esc(doc.slug)}"
+             draggable="true" data-slug="${esc(doc.slug)}" data-cat="${esc(doc.category || '')}"
+             onclick="openRosterDoc('${esc(doc.slug)}', 'event')">
+          <span style="cursor:grab;color:var(--dim);margin-right:4px;font-size:13px;
+                       line-height:1;vertical-align:middle">⠿</span>
+          <span class="c-white" style="font-size:12px">${esc(doc.title)}</span>
+          ${doc.category
+            ? `<span style="font-size:9px;color:var(--dim);margin-left:4px">
+                 [${doc.category === 'backstory' ? 'BS' : 'SE'}]
+               </span>`
+            : ''}
+        </div>`).join('')}`;
+  }
+
+  setPanel(`
+    <div class="view-header">
+      <span class="view-title">EVENTS</span>
+      <div class="inline-btns">
+        <button onclick="newEventDoc()">+ NEW</button>
+        <button class="b-cyan" onclick="generateRosterDoc('event','EVENTS')">GENERATE ONE</button>
+        <button class="b-yellow" onclick="generateRosterSet('event','EVENTS')">GENERATE SET</button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div style="display:flex;gap:0;min-height:540px">
+      <div id="roster-nav"
+           style="width:185px;flex-shrink:0;border-right:1px solid #1e1e1e;overflow-y:auto;padding:4px 0">
+        ${!docs.length
+          ? `<div class="c-dim" style="padding:12px;font-size:11px">
+               No events yet.<br><br>Click + NEW to create one.
+             </div>`
+          : groupHtml('backstory', groups.backstory) +
+            groupHtml('story', groups.story) +
+            groupHtml('', groups[''])}
+      </div>
+      <div id="roster-editor" style="flex:1;padding:14px;overflow-y:auto">
+        <div class="c-dim" style="padding-top:20px">
+          Select an event from the list, or click + NEW.
+        </div>
+      </div>
+    </div>
+  `);
+
+  S._rosterType  = 'event';
+  S._rosterLabel = 'EVENTS';
+  _initEventDrag();
+}
+
+// ─── Concepts roster ─────────────────────────────────────────────────────────
+
+async function loadConceptRoster() {
+  const d    = await GET('/api/documents?type=concept');
+  const docs = d.documents || [];
+
+  const items = docs.map(doc => `
+    <div class="roster-item" id="ri-${esc(doc.slug)}"
+         onclick="openRosterDoc('${esc(doc.slug)}', 'concept')">
+      <div class="c-white" style="font-size:12px;margin-bottom:2px">${esc(doc.title)}</div>
+      <div class="c-dim" style="font-size:10px">${esc((doc.created_at||'').slice(0,10))}</div>
+    </div>`).join('');
+
+  setPanel(`
+    <div class="view-header">
+      <span class="view-title">CONCEPTS</span>
+      <div class="inline-btns">
+        <button class="b-yellow" onclick="scanKBForConcepts(this)">⚡ SCAN KB FOR CONCEPTS</button>
+        <button onclick="newRosterDoc('concept','CONCEPTS')">+ NEW</button>
+        <button class="b-cyan" onclick="generateRosterDoc('concept','CONCEPTS')">GENERATE ONE</button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div style="display:flex;gap:0;min-height:540px">
+      <div id="roster-nav"
+           style="width:185px;flex-shrink:0;border-right:1px solid #1e1e1e;overflow-y:auto;padding:4px 0">
+        ${docs.length === 0
+          ? `<div class="c-dim" style="padding:12px;font-size:11px">
+               No concepts yet.<br><br>
+               Click <b>⚡ SCAN KB FOR CONCEPTS</b> to auto-extract concepts from your knowledge base, or + NEW to add one manually.
+             </div>`
+          : items}
+      </div>
+      <div id="roster-editor" style="flex:1;padding:14px;overflow-y:auto">
+        <div class="c-dim" style="padding-top:20px">
+          Select a concept from the list, or create a new one.
+        </div>
+      </div>
+    </div>
+  `);
+
+  S._rosterType  = 'concept';
+  S._rosterLabel = 'CONCEPTS';
+}
+
+async function scanKBForConcepts(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'SCANNING…'; }
+  try {
+    const task = `Scan every canon section and knowledge-base document in this storyworld and identify ALL named concepts — supernatural phenomena, cosmological forces, magic systems, prophecies, myths, cultural institutions, named artefacts with story significance, and any other named idea or system that shapes the world.
+
+Return ONLY a JSON array (no markdown fences, no explanation):
+[{"title": "The Fracture", "content": "## The Fracture\\n\\nFull description of this concept, its nature, origins, significance, and how it affects characters and the world."}, ...]
+
+Rules:
+- Include every named concept you find, even briefly mentioned ones
+- Each entry must have a distinct "title" (the concept name) and "content" (markdown document, 150–400 words)
+- Do NOT include character names, location names, or episode titles — only concepts, systems, and phenomena
+- Start with any concepts already listed in the KB or canon, then add more you discover`;
+
+    const resp = await POST('/api/agents/generate-doc-set', {
+      agent: 'lore',
+      doc_type: 'concept',
+      label: 'Concepts',
+      instructions: task,
+    });
+
+    const created = resp.created || [];
+    toast(`Extracted ${created.length} concept${created.length!==1?'s':''}. Reloading…`);
+    await loadConceptRoster();
+  } catch(e) {
+    toast(e.message || 'Scan failed', true);
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ SCAN KB FOR CONCEPTS'; }
+  }
+}
+
+function _initEventDrag() {
+  const nav = $('roster-nav');
+  if (!nav) return;
+  let dragSrc = null;
+
+  nav.querySelectorAll('.event-item').forEach(item => {
+    item.addEventListener('dragstart', e => {
+      dragSrc = item;
+      e.dataTransfer.effectAllowed = 'move';
+      item.style.opacity = '0.5';
+    });
+    item.addEventListener('dragend', () => {
+      item.style.opacity = '';
+      dragSrc = null;
+    });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    item.addEventListener('drop', async e => {
+      e.preventDefault();
+      if (!dragSrc || dragSrc === item) return;
+      const parent = item.parentNode;
+      const srcIdx = [...parent.querySelectorAll('.event-item')].indexOf(dragSrc);
+      const dstIdx = [...parent.querySelectorAll('.event-item')].indexOf(item);
+      if (srcIdx < dstIdx) parent.insertBefore(dragSrc, item.nextSibling);
+      else                  parent.insertBefore(dragSrc, item);
+      const newOrder = {};
+      [...parent.querySelectorAll('.event-item')].forEach((el, i) => {
+        newOrder[el.dataset.slug] = i;
+      });
+      try { await POST('/api/documents/event/reorder', { order_map: newOrder }); }
+      catch(ex) { toast(ex.message, true); }
+    });
+  });
+}
+
+function newEventDoc() {
+  const ed = $('roster-editor');
+  if (!ed) return;
+  ed.innerHTML = `
+    <div style="padding:20px 0">
+      <div class="c-white" style="font-size:12px;letter-spacing:1px;margin-bottom:16px">NEW EVENT</div>
+      <table style="width:100%;border-collapse:collapse">
+        <tr>
+          <td style="width:110px;color:var(--dim);font-size:11px;padding:6px 0">TITLE</td>
+          <td><input id="new-event-title" type="text" style="width:100%" placeholder="Event title"></td>
+        </tr>
+        <tr>
+          <td style="color:var(--dim);font-size:11px;padding:6px 0">CATEGORY</td>
+          <td>
+            <select id="new-event-cat" style="width:100%">
+              <option value="">— none —</option>
+              <option value="backstory">BACKSTORY</option>
+              <option value="story">STORY EVENTS</option>
+            </select>
+          </td>
+        </tr>
+      </table>
+      <div class="inline-btns mt8">
+        <button class="b-cyan" onclick="createEventDoc()">CREATE</button>
+        <button onclick="loadEventRoster()">CANCEL</button>
+      </div>
+    </div>
+  `;
+  setTimeout(() => { const ti = $('new-event-title'); if (ti) ti.focus(); }, 50);
+}
+
+async function createEventDoc() {
+  const title    = ($('new-event-title') || {}).value?.trim();
+  const category = ($('new-event-cat')   || {}).value;
+  if (!title) { toast('Title required', true); return; }
+  setLoading(true, 'CREATING...');
+  try {
+    const r = await POST('/api/documents/save', { doc_type: 'event', title, content: `# ${title}\n\n` });
+    if (category && r.meta?.slug) {
+      await POST(`/api/documents/event/${r.meta.slug}/meta`, { fields: { category } });
+    }
+    toast(`${title} created.`);
+    await loadEventRoster();
+    if (r.meta?.slug) setTimeout(() => openRosterDoc(r.meta.slug, 'event'), 100);
+  } catch(e) { toast(e.message, true); }
+  finally { setLoading(false); }
+}
+
+// ─── openRosterDoc ───────────────────────────────────────────────────────────
+
 async function openRosterDoc(slug, docType) {
   S._rosterOpenSlug = slug;
   S._rosterOpenType = docType;
@@ -4265,9 +4943,11 @@ async function openRosterDoc(slug, docType) {
   ed.innerHTML = '<div class="c-dim" style="padding:8px">LOADING...</div>';
 
   try {
-    const d       = await GET(`/api/documents/${docType}/${slug}`);
-    const content = d.content || '';
-    const title   = (d.meta || {}).title || slug;
+    const d        = await GET(`/api/documents/${docType}/${slug}`);
+    const content  = d.content || '';
+    const title    = (d.meta || {}).title || slug;
+    const category = (d.meta || {}).category || '';
+    const subtitle = (d.meta || {}).subtitle || '';
 
     // Check for existing image
     let imgUrl = null;
@@ -4300,6 +4980,25 @@ async function openRosterDoc(slug, docType) {
              style="display:none;max-width:100%;max-height:280px;border:1px solid #1e1e1e">
       </div>`}
 
+      ${'character,creature,location,object,event,concept'.split(',').includes(docType) ? `
+      <div style="margin-bottom:8px;display:flex;align-items:center;gap:10px">
+        <span class="c-dim" style="font-size:10px;letter-spacing:1px;min-width:60px">SUBTITLE</span>
+        <input id="entity-subtitle" type="text" value="${esc(subtitle)}"
+               style="flex:1;font-size:11px" placeholder="e.g. Dad, The Trickster, Hero's Guide…"
+               onchange="updateEntitySubtitle('${esc(slug)}','${esc(docType)}',this.value)">
+      </div>` : ''}
+
+      ${docType === 'event' ? `
+      <div style="margin-bottom:8px;display:flex;align-items:center;gap:10px">
+        <span class="c-dim" style="font-size:10px;letter-spacing:1px">CATEGORY</span>
+        <select id="event-cat-sel" style="font-size:11px"
+                onchange="updateEventCategory('${esc(slug)}', this.value)">
+          <option value="" ${!category ? 'selected' : ''}>— none —</option>
+          <option value="backstory" ${category === 'backstory' ? 'selected' : ''}>BACKSTORY</option>
+          <option value="story" ${category === 'story' ? 'selected' : ''}>STORY EVENTS</option>
+        </select>
+      </div>` : ''}
+
       <textarea id="roster-ta" rows="20">${esc(content)}</textarea>
 
       <div style="margin-top:8px;padding:8px 10px;border:1px solid #1a1a1a;background:#050505">
@@ -4324,13 +5023,7 @@ async function openRosterDoc(slug, docType) {
             <td style="width:80px;color:var(--dim);font-size:11px;padding:4px 0">AGENT</td>
             <td>
               <select id="roster-agent" style="width:100%">
-                <option value="writer">WRITER — develop and expand</option>
-                <option value="structure">STRUCTURE — beat sheet, act breaks, spine</option>
-                <option value="character">CHARACTER — deepen psychology and voice</option>
-                <option value="editor">EDITOR — tighten and polish</option>
-                <option value="lore">LORE — add world-building detail</option>
-                <option value="critic">CRITIC — critique and suggest improvements</option>
-                <option value="producer">PRODUCER — commercial and story viability</option>
+                <option value="writer">WRITER</option>
               </select>
             </td>
           </tr>
@@ -4371,8 +5064,8 @@ async function openRosterDoc(slug, docType) {
         <div id="kb-sync-results" style="display:none;margin-top:10px"></div>
       </div>` : ''}
 
-      ${'character,creature,location,object,event'.includes(docType) ? `
-      <!-- PROPAGATE TO KB — character/creature/location/object/event -->
+      ${'character,creature,location,object,event,concept'.includes(docType) ? `
+      <!-- PROPAGATE TO KB — character/creature/location/object/event/concept -->
       <div style="margin-top:10px;padding:10px;border:1px solid #0a1f1f;background:#010303">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <span style="font-size:10px;letter-spacing:2px;color:var(--cyan)">PROPAGATE TO KNOWLEDGE BASE</span>
@@ -4402,8 +5095,53 @@ async function openRosterDoc(slug, docType) {
           </button>
         </div>
         <div id="roster-canon-push-panel" style="display:none;margin-top:10px"></div>
+      </div>
+
+      <!-- CONNECTIONS — knowledge graph explicit edges -->
+      <div style="margin-top:10px;padding:10px;border:1px solid #1a0a2a;background:#040108">
+        <div style="color:#bb88ff;font-size:10px;letter-spacing:2px;margin-bottom:8px">CONNECTIONS · KNOWLEDGE GRAPH</div>
+        <div class="c-dim" style="font-size:10px;margin-bottom:8px">
+          Tag this entity to others — connections appear directly in the knowledge graph.
+        </div>
+        <div id="connections-list"><div class="c-dim" style="font-size:11px">Loading...</div></div>
+        <div style="margin-top:10px;border-top:1px solid #1a1a1a;padding-top:8px">
+          <div class="c-dim" style="font-size:10px;margin-bottom:6px">ADD CONNECTION</div>
+          <table style="width:100%;border-collapse:collapse">
+            <tr>
+              <td style="width:80px;color:var(--dim);font-size:11px;padding:4px 0">TYPE</td>
+              <td>
+                <select id="conn-target-type" style="width:100%"
+                        onchange="loadConnTargetOptions('${esc(slug)}','${esc(docType)}')">
+                  <option value="character">Lead Character</option>
+                  <option value="creature">Supporting Character</option>
+                  <option value="location">Location</option>
+                  <option value="object">Object</option>
+                  <option value="event">Event</option>
+                  <option value="concept">Concept</option>
+                </select>
+              </td>
+            </tr>
+            <tr>
+              <td style="color:var(--dim);font-size:11px;padding:4px 0">ENTITY</td>
+              <td><select id="conn-target-doc" style="width:100%"><option>Loading...</option></select></td>
+            </tr>
+            <tr>
+              <td style="color:var(--dim);font-size:11px;padding:4px 0">LABEL</td>
+              <td><input id="conn-label" type="text" style="width:100%"
+                         placeholder="e.g. lives in, carries, knows, allied with"></td>
+            </tr>
+          </table>
+          <div class="inline-btns mt8">
+            <button class="b-cyan" onclick="addEntityRelation('${esc(slug)}','${esc(docType)}')">ADD CONNECTION</button>
+          </div>
+        </div>
       </div>` : ''}
     `;
+    _populateAgentSelect('roster-agent', 'writer');
+    if ('character,creature,location,object,event,concept'.split(',').includes(docType)) {
+      loadConnectionsList(slug, docType);
+      loadConnTargetOptions(slug, docType);
+    }
   } catch(e) {
     ed.innerHTML = `<div class="c-red">${esc(e.message)}</div>`;
   }
@@ -4417,6 +5155,197 @@ async function saveRosterDoc(slug, docType, title) {
     toast(`${title} saved.`);
   } catch(e) { toast(e.message, true); }
   finally { setLoading(false); }
+}
+
+// ─── Entity connections (knowledge graph edges + manual) ─────────────────────
+//
+// Uses the exact same data source as the graph visualisation (_graphData),
+// so the panel and the graph are always consistent.
+// If _graphData isn't loaded yet, fetches /api/canon/graph first (cached, fast).
+
+async function loadConnectionsList(slug, docType) {
+  const el = $('connections-list');
+  if (!el) return;
+  el.innerHTML = '<div class="c-dim" style="font-size:11px">Loading...</div>';
+  try {
+    // 1. Get explicit (manual) relations from this doc's meta
+    const d       = await GET(`/api/documents/${docType}/${slug}`);
+    const explicit = (d.meta || {}).relations || [];
+    const title    = (d.meta || {}).title || slug;
+
+    // 2. Ensure graph data is loaded (same source the graph visualisation uses)
+    if (!_graphData) {
+      try {
+        const gd = await GET('/api/canon/graph');
+        if (gd.nodes) renderGraph(gd);   // populates _graphData
+      } catch(_) {}
+    }
+
+    // 3. Extract edges from _graphData that involve this entity
+    const graphEdges = _connEdgesForEntity(slug, title);
+
+    // 4. Render
+    _renderConnectionsPanel(el, slug, docType, explicit, graphEdges);
+
+  } catch(ex) {
+    if (el) el.innerHTML = `<div class="c-red">${esc(ex.message)}</div>`;
+  }
+}
+
+// Extract edges from in-memory _graphData matching this entity by slug OR label.
+function _connEdgesForEntity(slug, title) {
+  if (!_graphData || !_graphData.nodes || !_graphData.edges) return [];
+
+  const nodes = _graphData.nodes;
+  const edges = _graphData.edges;
+
+  // Match node by: doc slug, slug-of-title, or label (case-insensitive)
+  const titleLower = (title || '').toLowerCase();
+  const titleSlug  = titleLower.replace(/[^\w\s]/g, '').replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
+  const matchIds   = new Set([slug, titleSlug, titleLower]);
+
+  const nodeMatch = nodes.find(n => {
+    const nid    = (n.id || '').toLowerCase();
+    const nlabel = (n.label || '').toLowerCase();
+    return matchIds.has(nid) || nlabel === titleLower;
+  });
+  if (!nodeMatch) return [];
+
+  // Build fast node lookup
+  const nodeById = {};
+  nodes.forEach(n => { nodeById[n.id] = n; });
+
+  const result = [];
+  for (const e of edges) {
+    // After D3 simulation, source/target may be objects; handle both cases
+    const srcId = (typeof e.source === 'object' ? e.source.id : e.source) || '';
+    const tgtId = (typeof e.target === 'object' ? e.target.id : e.target) || '';
+
+    if (srcId === nodeMatch.id) {
+      const other = nodeById[tgtId] || (typeof e.target === 'object' ? e.target : {});
+      result.push({
+        direction:   'outgoing',
+        label:       e.label || '',
+        other_id:    tgtId,
+        other_label: other.label || tgtId,
+        other_type:  other.type  || '',
+      });
+    } else if (tgtId === nodeMatch.id) {
+      const other = nodeById[srcId] || (typeof e.source === 'object' ? e.source : {});
+      result.push({
+        direction:   'incoming',
+        label:       e.label || '',
+        other_id:    srcId,
+        other_label: other.label || srcId,
+        other_type:  other.type  || '',
+      });
+    }
+  }
+  return result;
+}
+
+function _renderConnectionsPanel(el, slug, docType, explicit, graph) {
+  if (!explicit.length && !graph.length) {
+    el.innerHTML = '<div class="c-dim" style="font-size:11px">No connections in the knowledge graph yet.<br><span style="font-size:10px">Add connections below, or run KNOWLEDGE GRAPH to extract them from your canon.</span></div>';
+    return;
+  }
+
+  let html = '';
+
+  // Manual (editable, × remove)
+  if (explicit.length) {
+    html += `<div style="font-size:9px;color:var(--dim);letter-spacing:1px;margin-bottom:4px">MANUAL</div>`;
+    html += explicit.map((r, i) => `
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #111">
+        <span style="font-size:10px;color:var(--dim);min-width:70px">${esc(r.label || 'related to')}</span>
+        <span style="font-size:11px;color:var(--fg)">${esc(r.target_title || r.target_slug)}</span>
+        <span style="font-size:9px;color:var(--dim)">[${esc(r.target_type)}]</span>
+        <button class="b-red" style="font-size:9px;padding:1px 5px;margin-left:auto"
+                onclick="removeEntityRelation('${esc(slug)}','${esc(docType)}',${i})">×</button>
+      </div>`).join('');
+  }
+
+  // Graph-extracted (read-only, directional arrows)
+  if (graph.length) {
+    if (explicit.length) html += `<div style="margin-top:8px"></div>`;
+    html += `<div style="font-size:9px;color:var(--dim);letter-spacing:1px;margin-bottom:4px">FROM KNOWLEDGE GRAPH</div>`;
+    html += graph.map(r => {
+      const arrow    = r.direction === 'outgoing' ? '→' : '←';
+      const arrowCol = r.direction === 'outgoing' ? 'var(--cyan)' : '#bb88ff';
+      return `
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #111">
+        <span style="font-size:12px;color:${arrowCol};min-width:12px">${arrow}</span>
+        <span style="font-size:10px;color:var(--dim);min-width:70px">${esc(r.label || '')}</span>
+        <span style="font-size:11px;color:#aaa">${esc(r.other_label || r.other_id)}</span>
+        <span style="font-size:9px;color:var(--dim)">[${esc(r.other_type)}]</span>
+      </div>`;
+    }).join('');
+  }
+
+  el.innerHTML = html;
+}
+
+// Called after add/remove — reloads the full panel to keep in sync
+function _renderConnectionsList(slug, docType) {
+  loadConnectionsList(slug, docType);
+}
+
+async function loadConnTargetOptions(slug, docType) {
+  const typeEl = $('conn-target-type');
+  const docEl  = $('conn-target-doc');
+  if (!typeEl || !docEl) return;
+  const targetType = typeEl.value;
+  docEl.innerHTML = '<option>Loading...</option>';
+  try {
+    const d    = await GET(`/api/documents?type=${targetType}`);
+    const docs = (d.documents || []).filter(dc => !(dc.slug === slug && targetType === docType));
+    docEl.innerHTML = docs.length
+      ? docs.map(dc => `<option value="${esc(dc.slug)}" data-title="${esc(dc.title)}">${esc(dc.title)}</option>`).join('')
+      : '<option value="">— none available —</option>';
+  } catch(ex) { docEl.innerHTML = '<option>Error loading</option>'; }
+}
+
+async function addEntityRelation(slug, docType) {
+  const typeEl  = $('conn-target-type');
+  const docEl   = $('conn-target-doc');
+  const labelEl = $('conn-label');
+  if (!typeEl || !docEl) return;
+  const targetType  = typeEl.value;
+  const targetSlug  = docEl.value;
+  const targetTitle = docEl.options[docEl.selectedIndex]?.getAttribute('data-title') || targetSlug;
+  const label       = (labelEl?.value || '').trim() || 'related to';
+  if (!targetSlug || targetSlug === '— none available —') { toast('Select an entity', true); return; }
+  try {
+    const r = await POST(`/api/documents/${docType}/${slug}/relations`,
+                         { target_type: targetType, target_slug: targetSlug, target_title: targetTitle, label });
+    if (labelEl) labelEl.value = '';
+    _renderConnectionsList(slug, docType, (r.meta || {}).relations || []);
+    toast('Connection added.');
+  } catch(ex) { toast(ex.message, true); }
+}
+
+async function removeEntityRelation(slug, docType, idx) {
+  try {
+    const resp = await fetch(`/api/documents/${docType}/${slug}/relations/${idx}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    _renderConnectionsList(slug, docType, (data.meta || {}).relations || []);
+    toast('Connection removed.');
+  } catch(ex) { toast(ex.message, true); }
+}
+
+async function updateEventCategory(slug, category) {
+  try {
+    await POST(`/api/documents/event/${slug}/meta`, { fields: { category } });
+    toast('Category updated.');
+  } catch(e) { toast(e.message, true); }
+}
+
+async function updateEntitySubtitle(slug, docType, subtitle) {
+  try {
+    await POST(`/api/documents/${docType}/${slug}/meta`, { fields: { subtitle } });
+    toast('Subtitle saved.');
+  } catch(e) { toast(e.message, true); }
 }
 
 async function deleteRosterDoc(slug, docType, title) {
@@ -5034,7 +5963,7 @@ async function loadCharacterRoster(activeTab) {
 
   setPanel(`
     <div class="view-header">
-      <span class="view-title">CHARACTERS</span>
+      <span class="view-title">${label}</span>
       <div class="inline-btns">
         <button onclick="newRosterDoc('${docType}','${label}')">+ NEW</button>
         <button class="b-cyan" onclick="generateRosterDoc('${docType}','${label}')">GENERATE ONE</button>
@@ -5076,6 +6005,312 @@ async function loadCharacterRoster(activeTab) {
 /* ═══════════════════════════════════════════════════════════════════════════
    EPISODES
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BOOK — long-form novel generator (80,000–100,000 words)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+async function loadBook() {
+  setLoading(true, 'LOADING BOOK...');
+  try {
+    const status = await GET('/api/book/status');
+    renderBook(status);
+  } catch(e) {
+    setPanel(`<div class="c-red">${esc(e.message)}</div>`);
+  } finally { setLoading(false); }
+}
+
+function renderBook(status) {
+  const { outline_exists, chapters, total_words, target_words, planned_chapters, next_chapter } = status;
+  const pct     = total_words > 0 ? Math.min(100, (total_words / target_words * 100)).toFixed(1) : 0;
+  const barW    = Math.min(100, Math.round(total_words / target_words * 100));
+  const written = chapters.length;
+
+  setPanel(`
+    <div class="view-header">
+      <span class="view-title">BOOK</span>
+      <div class="inline-btns">
+        ${outline_exists
+          ? `<button class="b-dim" style="font-size:10px" onclick="viewBookOutline()">VIEW OUTLINE</button>
+             <button class="b-cyan" onclick="revisitBookPlan()">REVISE PLAN</button>`
+          : `<button class="b-cyan" onclick="startBookPlan()">PLAN BOOK</button>`}
+        ${outline_exists
+          ? `<button class="b-yellow" onclick="writeNextChapter(${next_chapter})">
+               WRITE CHAPTER ${next_chapter}
+             </button>`
+          : ''}
+        ${written > 0 ? `<button class="b-green" onclick="exportBook()">EXPORT BOOK</button>` : ''}
+      </div>
+    </div>
+    <div class="sep"></div>
+
+    <!-- Progress bar -->
+    <div style="margin-bottom:16px;padding:10px;border:1px solid #0a1a0a;background:#020502">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:10px;letter-spacing:1px;color:var(--green)">WORD COUNT PROGRESS</span>
+        <span style="font-size:11px;color:var(--cyan)">
+          ${total_words.toLocaleString()} / ${(target_words||85000).toLocaleString()}+ words
+        </span>
+      </div>
+      <div style="height:6px;background:#111;border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${barW}%;background:var(--green);border-radius:3px;transition:width 0.4s"></div>
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin-top:4px">
+        ${pct}% · ${written} chapters written${planned_chapters ? ` · ${planned_chapters} planned` : ''}
+      </div>
+    </div>
+
+    <!-- Empty state / Plan prompt -->
+    ${!outline_exists ? `
+    <div style="padding:30px 20px;border:1px solid #1a1a1a;text-align:center">
+      <div style="font-size:14px;color:var(--fg);margin-bottom:8px;letter-spacing:1px">
+        READY TO WRITE YOUR BOOK
+      </div>
+      <div style="font-size:11px;color:var(--dim);margin-bottom:20px;max-width:400px;margin-left:auto;margin-right:auto">
+        Start by planning the book. The AI will read your entire knowledge base and create
+        a chapter-by-chapter outline for an 80,000–100,000 word novel.
+      </div>
+      <button class="b-cyan" onclick="startBookPlan()">PLAN BOOK →</button>
+    </div>` : ''}
+
+    <!-- Book plan panel (for streaming output) -->
+    <div id="book-plan-panel" style="display:none;margin-bottom:16px">
+      <div style="color:var(--cyan);font-size:10px;letter-spacing:1px;margin-bottom:8px" id="book-plan-status">PLANNING...</div>
+      <div id="book-plan-output"
+           style="font-size:11px;line-height:1.7;white-space:pre-wrap;max-height:500px;overflow-y:auto;
+                  border:1px solid #1a1a1a;padding:12px;background:#020202"></div>
+    </div>
+
+    <!-- Chapter writer output (streaming) -->
+    <div id="book-writer-panel" style="display:none;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span id="book-writer-title" style="font-size:11px;letter-spacing:1px;color:var(--yellow)"></span>
+        <span id="book-writer-wc" style="font-size:10px;color:var(--dim)"></span>
+      </div>
+      <div id="book-writer-output"
+           style="font-size:12px;line-height:1.7;white-space:pre-wrap;max-height:500px;overflow-y:auto;
+                  border:1px solid #1a1a1a;padding:12px;background:#020202"></div>
+    </div>
+
+    <!-- Chapter list -->
+    ${written > 0 ? `
+    <div style="margin-top:${outline_exists ? '0' : '16px'}">
+      <div style="font-size:9px;letter-spacing:2px;color:var(--dim);margin-bottom:8px">CHAPTERS</div>
+      <div id="book-chapter-list">
+        ${chapters.map(ch => `
+          <div style="padding:8px 0;border-bottom:1px solid #0e0e0e;display:flex;align-items:center;gap:10px">
+            <span style="font-size:10px;color:var(--dim);width:60px;flex-shrink:0">CH ${ch.number}</span>
+            <span class="c-white" style="font-size:12px;flex:1">${esc(ch.title)}</span>
+            <span style="font-size:10px;color:var(--cyan);width:90px;text-align:right;flex-shrink:0">
+              ${ch.word_count.toLocaleString()} wds
+            </span>
+            <div class="inline-btns" style="flex-shrink:0">
+              <button style="font-size:9px;padding:2px 6px" onclick="viewBookChapter(${ch.number})">VIEW</button>
+              <button class="b-dim" style="font-size:9px;padding:2px 6px" onclick="writeNextChapter(${ch.number})">REWRITE</button>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>` : (outline_exists ? `
+    <div class="c-dim" style="font-size:11px;padding:12px;border:1px solid #111">
+      Outline ready. Click WRITE CHAPTER 1 to begin.
+    </div>` : '')}
+  `);
+}
+
+async function startBookPlan() {
+  const ed = $('book-plan-panel');
+  if (ed) { ed.style.display = 'block'; }
+
+  const task = prompt(
+    'Optional: add guidance for the novel plan\n\n' +
+    'Examples:\n' +
+    '  "Third person limited, literary fiction tone"\n' +
+    '  "Dark thriller — lean into the horror elements"\n' +
+    '  "25 chapters, each from a different character POV"\n\n' +
+    'Leave blank to let the AI decide based on your knowledge base.'
+  ) || '';
+
+  const planStatus = $('book-plan-status');
+  const planOutput = $('book-plan-output');
+  if (planStatus) planStatus.textContent = 'PLANNING BOOK...';
+  if (planOutput) planOutput.textContent = '';
+
+  let full = '';
+  try {
+    const resp = await fetch('/api/book/plan/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task }),
+    });
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const ev = JSON.parse(line.slice(6));
+          if (ev.chunk) {
+            full += ev.chunk;
+            if (planOutput) planOutput.textContent = full;
+          }
+          if (ev.done) {
+            if (planStatus) planStatus.textContent = `OUTLINE COMPLETE — ${ev.chapters} chapters planned`;
+            toast(`Book outline created: ${ev.chapters} chapters`);
+            updateToks();
+            setTimeout(() => loadBook(), 800);
+          }
+          if (ev.error) toast(ev.error, true);
+        } catch(_) {}
+      }
+    }
+  } catch(ex) { toast(ex.message, true); }
+}
+
+async function revisitBookPlan() {
+  const task = prompt('Describe how you want to change the book plan (or leave blank to regenerate):') || '';
+  await startBookPlanWithTask(task);
+}
+
+async function startBookPlanWithTask(task) {
+  const panelEl = $('book-plan-panel');
+  if (panelEl) panelEl.style.display = 'block';
+  const planStatus = $('book-plan-status');
+  const planOutput = $('book-plan-output');
+  if (planStatus) planStatus.textContent = 'REPLANNING BOOK...';
+  if (planOutput) planOutput.textContent = '';
+
+  let full = '';
+  try {
+    const resp = await fetch('/api/book/plan/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task }),
+    });
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const ev = JSON.parse(line.slice(6));
+          if (ev.chunk) { full += ev.chunk; if (planOutput) planOutput.textContent = full; }
+          if (ev.done)  { toast(`Outline updated`); updateToks(); setTimeout(() => loadBook(), 800); }
+          if (ev.error) toast(ev.error, true);
+        } catch(_) {}
+      }
+    }
+  } catch(ex) { toast(ex.message, true); }
+}
+
+async function writeNextChapter(chapterNum) {
+  const writerPanel  = $('book-writer-panel');
+  const writerTitle  = $('book-writer-title');
+  const writerOutput = $('book-writer-output');
+  const writerWc     = $('book-writer-wc');
+
+  if (writerPanel)  writerPanel.style.display  = 'block';
+  if (writerTitle)  writerTitle.textContent  = `WRITING CHAPTER ${chapterNum}...`;
+  if (writerOutput) writerOutput.textContent = '';
+  if (writerWc)     writerWc.textContent     = '';
+
+  // Scroll to writer panel
+  if (writerPanel) writerPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  let full = '';
+  try {
+    const resp = await fetch('/api/book/write-chapter/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chapter_number: chapterNum }),
+    });
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const ev = JSON.parse(line.slice(6));
+          if (ev.chunk) {
+            full += ev.chunk;
+            if (writerOutput) writerOutput.textContent = full;
+            if (writerWc) writerWc.textContent = `${full.split(/\s+/).filter(Boolean).length.toLocaleString()} words`;
+          }
+          if (ev.done) {
+            if (writerTitle) writerTitle.textContent = `CHAPTER ${chapterNum} COMPLETE`;
+            if (writerWc)    writerWc.textContent = `${ev.word_count.toLocaleString()} words`;
+            toast(`Chapter ${chapterNum} written — ${ev.word_count.toLocaleString()} words`);
+            updateToks();
+            setTimeout(() => loadBook(), 1000);
+          }
+          if (ev.error) { toast(ev.error, true); }
+        } catch(_) {}
+      }
+    }
+  } catch(ex) { toast(ex.message, true); }
+}
+
+async function viewBookOutline() {
+  const d  = await GET('/api/book/outline');
+  const ed = $('book-plan-panel');
+  if (ed) {
+    ed.style.display = 'block';
+    const out = $('book-plan-output');
+    const st  = $('book-plan-status');
+    if (out) out.textContent = d.outline || '(empty)';
+    if (st)  st.textContent  = 'BOOK OUTLINE';
+    ed.scrollIntoView({ behavior: 'smooth' });
+  }
+}
+
+async function viewBookChapter(n) {
+  const d = await GET(`/api/book/chapter/${n}`);
+  const writerPanel  = $('book-writer-panel');
+  const writerTitle  = $('book-writer-title');
+  const writerOutput = $('book-writer-output');
+  const writerWc     = $('book-writer-wc');
+  if (writerPanel)  writerPanel.style.display  = 'block';
+  if (writerTitle)  writerTitle.textContent  = `CHAPTER ${n}`;
+  if (writerOutput) writerOutput.textContent = d.content || '';
+  const wc = (d.content || '').split(/\s+/).filter(Boolean).length;
+  if (writerWc) writerWc.textContent = `${wc.toLocaleString()} words`;
+  if (writerPanel) writerPanel.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function exportBook() {
+  setLoading(true, 'EXPORTING BOOK...');
+  try {
+    const d = await GET('/api/book/export');
+    const blob = new Blob([d.content], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'book_export.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(`Book exported — ${d.word_count.toLocaleString()} words`);
+  } catch(e) { toast(e.message, true); }
+  finally { setLoading(false); }
+}
+
+/* ─── Episodes ─────────────────────────────────────────────────────────────── */
 
 async function loadEpisodes() {
   const d    = await GET('/api/documents?type=episode');

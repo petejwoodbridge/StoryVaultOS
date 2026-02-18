@@ -163,9 +163,37 @@ All agent output must be consistent with this reference.
 """
 
 
+NOVEL_METHODOLOGY = """
+════════════════════════════════════════════════════════════
+NOVEL WRITING CRAFT
+────────────────────────────────────────────────────────────
+This is LONG-FORM PROSE FICTION — a novel. Not a screenplay.
+Write as a published novelist, not a screenwriter.
+
+PROSE CRAFT PRINCIPLES
+• Show, don't tell — through narration, not script action lines
+• Rich sensory description — sight, sound, smell, touch, taste
+• Character interiority — thoughts, feelings, visceral reactions
+• Natural, specific dialogue — subtext, interrupted speech, texture
+• Scene setting as mood — environment reflects character state
+• Pacing — vary sentence length; short for action, long for reflection
+• Chapter arc — each chapter has its own entry and exit value shift
+• Chapter hooks — end on forward momentum, unresolved tension, or resonance
+
+NOVEL STANDARDS
+• 3,000–4,500 words per chapter minimum — do not truncate
+• Third person limited or first person (match the plan)
+• Write complete, publishable prose — no summaries, no placeholders
+• Never use INT./EXT. or script formatting of any kind
+• Every paragraph earns its place
+════════════════════════════════════════════════════════════
+"""
+
+
 class BaseAgent(ABC):
     name  = "BaseAgent"
     role  = "You are a helpful assistant."
+    use_cinematic_methodology = True  # set False in novel-writing agents
 
     def __init__(self, openai_client, project_path: str, config):
         self.client       = openai_client
@@ -309,11 +337,12 @@ class BaseAgent(ABC):
             )
 
         effective_role   = get_role_override(self.name) or self.role
+        method_block     = CINEMATIC_METHODOLOGY if self.use_cinematic_methodology else NOVEL_METHODOLOGY
         rules_block      = _build_world_rules_block(ctx.get("world_rules", ""))
         wb_block         = _build_world_bible_block(ctx.get("world_bible", ""))
         kb_block         = _build_kb_system_block(ctx.get("kb_documents", ""))
         messages = [
-            {"role": "system", "content": effective_role + "\n" + CINEMATIC_METHODOLOGY + rules_block + wb_block + kb_block},
+            {"role": "system", "content": effective_role + "\n" + method_block + rules_block + wb_block + kb_block},
             {"role": "user",   "content": self.get_task_prompt(task, ctx)},
         ]
 
@@ -350,11 +379,12 @@ class BaseAgent(ABC):
             )
 
         effective_role   = get_role_override(self.name) or self.role
+        method_block     = CINEMATIC_METHODOLOGY if self.use_cinematic_methodology else NOVEL_METHODOLOGY
         rules_block      = _build_world_rules_block(ctx.get("world_rules", ""))
         wb_block         = _build_world_bible_block(ctx.get("world_bible", ""))
         kb_block         = _build_kb_system_block(ctx.get("kb_documents", ""))
         messages = [
-            {"role": "system", "content": effective_role + "\n" + CINEMATIC_METHODOLOGY + rules_block + wb_block + kb_block},
+            {"role": "system", "content": effective_role + "\n" + method_block + rules_block + wb_block + kb_block},
             {"role": "user",   "content": self.get_task_prompt(task, ctx)},
         ]
 

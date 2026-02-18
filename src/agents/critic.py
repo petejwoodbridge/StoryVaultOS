@@ -28,6 +28,14 @@ Constraints you must obey:
 """
 
     def get_task_prompt(self, task: str, context: dict) -> str:
+        section = context.get("section_content", "")
+        heading = context.get("section_heading", "")
+        section_block = f"\n## SECTION UNDER REVIEW: {heading}\n\n{section}\n" if section else ""
+        prior = context.get("prior_deliberation", "")
+        prior_block = f"\n## PRIOR DELIBERATION\n\n{prior}\n" if prior else ""
+        content = context.get("current_content", "")
+        content_block = f"\n## CONTENT TO CRITIQUE\n\n{content}\n" if content else ""
+
         return f"""\
 ## TASK
 
@@ -44,13 +52,7 @@ Constraints you must obey:
 ## WORKING MEMORY
 
 {context.get('working_memory', 'No working memory.')}
-
----
-
-## CONTENT TO CRITIQUE
-
-{context.get('current_content', 'No content provided for critique.')}
-
+{content_block}{section_block}{prior_block}
 ---
 
 ## CRITIQUE FORMAT
@@ -58,16 +60,16 @@ Constraints you must obey:
 Structure your critique as follows:
 
 ### STRENGTHS
-[What works — be specific]
+[What works — be specific, cite names/details from the material]
 
 ### PROBLEMS
-[Numbered list of specific issues with line references where possible]
+[Numbered list of specific issues with references where possible]
 
 ### CANON VIOLATIONS
 [Any facts that contradict established canon — or NONE]
 
 ### PROPOSED FIXES
-[Concrete revision suggestions for each problem]
+[Concrete revision suggestions for each problem — reference prior deliberation where relevant]
 
 ### VERDICT
 [APPROVE / REVISE / REJECT — with one-line justification]

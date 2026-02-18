@@ -130,8 +130,8 @@ Use the team room to workshop rule changes with the full agent team before commi
 
 ### WORLD BIBLE
 Six-section story bible: **Overview** (logline, premise, theme), **Lore** (history, mythology),
-**Logic** (how the world works), **Tone** (voice, aesthetic, reference points), **Structure**
-(act structure, episode arc), and **Rules** (hard constraints).
+**Logic** (how the world works), **Tone** (voice, aesthetic, reference points), **Story**
+(prose summary of the full story arc — acts, key turns, inciting incident, climax), and **Rules** (hard constraints).
 
 Each section has:
 - **RUN AGENT ▾** — single agent revision with proposal output
@@ -228,7 +228,7 @@ sections serves a distinct purpose:
 | **Lore** | History, mythology, backstory — the world before your story begins |
 | **Logic** | How the world works: technology, economy, power structures, magic systems |
 | **Tone** | Voice, aesthetic, cinematic references, what it feels like |
-| **Structure** | Narrative architecture: acts, episodes, major turning points |
+| **Story** | Prose narrative of the full story arc: acts, inciting incident, turning points, climax |
 | **Rules** | Hard constraints — the things that can never happen in this world |
 
 Agents working on the World Bible write in **descriptive prose** (not screenplay format) and

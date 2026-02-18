@@ -9,17 +9,19 @@ from .logline     import LoglineAgent
 from .treatment   import TreatmentAgent
 from .lore        import LoreAgent
 from .showrunner  import ShowrunnerAgent
+from .book_writer import BookWriterAgent
 
 AGENT_REGISTRY: dict[str, type] = {
-    "writer":      WriterAgent,
-    "critic":      CriticAgent,
-    "editor":      EditorAgent,
-    "archivist":   ArchivistAgent,
-    "producer":    ProducerAgent,
-    "character":   CharacterAgent,
-    "structure":   StructureAgent,
-    "logline":     LoglineAgent,
-    "treatment":   TreatmentAgent,
-    "lore":        LoreAgent,
-    "showrunner":  ShowrunnerAgent,
+    "writer":       WriterAgent,
+    "critic":       CriticAgent,
+    "editor":       EditorAgent,
+    "archivist":    ArchivistAgent,
+    "producer":     ProducerAgent,
+    "character":    CharacterAgent,
+    "structure":    StructureAgent,
+    "logline":      LoglineAgent,
+    "treatment":    TreatmentAgent,
+    "lore":         LoreAgent,
+    "showrunner":   ShowrunnerAgent,
+    "book_writer":  BookWriterAgent,
 }

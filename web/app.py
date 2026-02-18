@@ -27,9 +27,11 @@ from src.openai_client import OpenAIClient
 from src.agents        import AGENT_REGISTRY
 from src.deliberation  import DeliberationEngine
 from src.teams         import list_teams, get_team
-from src.documents     import DocumentsManager, DOC_TYPES
+from src.documents     import DocumentsManager, DOC_TYPES, ENTITY_TYPES, _slug as doc_slug
 from src.graph         import CanonGraphExtractor
 from src.world_bible   import WorldBibleManager
+from src.snapshot      import SnapshotManager
+from src.session_log   import SessionLogger
 
 app = Flask(__name__, template_folder="templates")
 
@@ -319,6 +321,13 @@ def approve_proposal(prop_id):
         if CanonManager(p).is_locked():
             return err("Canon is LOCKED. Unlock first.")
 
+    # Snapshot before overwrite so approval can be undone
+    if target:
+        SnapshotManager.push(
+            p, target,
+            f"Proposal approved: {data.get('type', '')} · {data.get('agent', '')}"
+        )
+
     success, msg = pm.approve(prop_id)
     if not success: return err(msg)
     commit_id = VersionTracker(p).commit(pm.get(prop_id))
@@ -557,19 +566,56 @@ def deliberate_stream():
     engine  = DeliberationEngine(client, p, c)
 
     def generate():
+        from datetime import datetime as _dt
         total_tokens = 0
         total_cost   = 0.0
+        # Session record for the conversation log
+        session = {
+            "id":       "session_" + _dt.now().strftime("%Y%m%d_%H%M%S_%f"),
+            "timestamp": _dt.now().isoformat(),
+            "team":     team_id,
+            "heading":  context.get("section_heading", ""),
+            "task":     task,
+            "turns":    [],
+            "total_tokens": 0,
+            "total_cost":   0.0,
+        }
+        current_turn = None
         try:
             for event in engine.run(task, team_id, context, rounds=rounds):
                 yield f"data: {json.dumps(event)}\n\n"
-                if event.get("type") == "done":
+                etype = event.get("type")
+                if etype == "agent_start":
+                    current_turn = {
+                        "agent":   event.get("agent", ""),
+                        "key":     event.get("key", ""),
+                        "content": "",
+                        "tokens":  0,
+                        "cost":    0.0,
+                    }
+                elif etype == "chunk" and current_turn is not None:
+                    current_turn["content"] += event.get("content", "")
+                elif etype == "agent_done" and current_turn is not None:
+                    current_turn["tokens"] = event.get("tokens", 0)
+                    current_turn["cost"]   = event.get("cost", 0.0)
+                    session["turns"].append(current_turn)
+                    current_turn = None
+                elif etype == "done":
                     total_tokens = event.get("total_tokens", 0)
                     total_cost   = event.get("total_cost", 0.0)
+                    session["total_tokens"] = total_tokens
+                    session["total_cost"]   = total_cost
         except Exception as ex:
             yield f"data: {json.dumps({'type': 'error', 'message': str(ex)})}\n\n"
         finally:
             if total_tokens:
                 c.add_tokens(0, 0, total_cost)
+            # Persist session if any turns were captured
+            if session["turns"]:
+                try:
+                    SessionLogger.append(p, session)
+                except Exception:
+                    pass
             yield "data: [DONE]\n\n"
 
     return Response(
@@ -1339,6 +1385,66 @@ def get_document(doc_type, slug):
     return ok(**doc)
 
 
+@app.route("/api/documents/<doc_type>/<slug>/connections")
+def get_entity_connections(doc_type, slug):
+    """
+    Return explicit (user-added) relations PLUS any graph-extracted edges
+    that reference this entity — for display in the CONNECTIONS panel.
+    """
+    c, p, e = require_project()
+    if e: return e
+    dm  = DocumentsManager(p)
+    doc = dm.get(doc_type, slug)
+    if not doc: return err("Document not found")
+
+    title    = (doc.get("meta") or {}).get("title", slug)
+    explicit = (doc.get("meta") or {}).get("relations", [])
+
+    # Build a set of IDs that could represent this entity in the graph.
+    # Match by: doc slug, slug-of-title, AND any node whose label == title
+    slug_variants = {slug, doc_slug(title)}
+    title_lower   = title.lower()
+
+    graph_edges = []
+    cache_path  = os.path.join(p, "Canon", "graph.json")
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                graph = json.load(f)
+            nodes = {n["id"]: n for n in graph.get("nodes", [])}
+
+            # Expand slug_variants with any node whose label matches the title
+            for nid, node in nodes.items():
+                if node.get("label", "").lower() == title_lower:
+                    slug_variants.add(nid)
+
+            for edge in graph.get("edges", []):
+                src = str(edge.get("source", ""))
+                tgt = str(edge.get("target", ""))
+                if src in slug_variants:
+                    other = nodes.get(tgt, {})
+                    graph_edges.append({
+                        "direction":   "outgoing",
+                        "label":       edge.get("label", ""),
+                        "other_id":    tgt,
+                        "other_label": other.get("label", tgt),
+                        "other_type":  other.get("type", ""),
+                    })
+                elif tgt in slug_variants:
+                    other = nodes.get(src, {})
+                    graph_edges.append({
+                        "direction":   "incoming",
+                        "label":       edge.get("label", ""),
+                        "other_id":    src,
+                        "other_label": other.get("label", src),
+                        "other_type":  other.get("type", ""),
+                    })
+        except Exception:
+            pass
+
+    return ok(explicit=explicit, graph=graph_edges)
+
+
 @app.route("/api/documents/save", methods=["POST"])
 def save_document():
     c, p, e = require_project()
@@ -1350,7 +1456,12 @@ def save_document():
     if not doc_type or not title:
         return err("doc_type and title required")
     try:
-        dm   = DocumentsManager(p)
+        dm = DocumentsManager(p)
+        # Snapshot existing file before overwrite (if it exists)
+        if doc_type in DOC_TYPES:
+            info = DOC_TYPES[doc_type]
+            tentative_path = os.path.join(p, "Documents", info["folder"], f"{doc_slug(title)}.md")
+            SnapshotManager.push(p, tentative_path, f"Document save: {title}")
         meta = dm.save(doc_type, title, content)
         return ok(meta=meta)
     except ValueError as ex:
@@ -1364,6 +1475,68 @@ def delete_document(doc_type, slug):
     dm      = DocumentsManager(p)
     removed = dm.delete(doc_type, slug)
     return ok(removed=removed)
+
+
+@app.route("/api/documents/<doc_type>/reorder", methods=["POST"])
+def reorder_documents(doc_type):
+    """Set order for multiple documents. Body: {order_map: {slug: int}}"""
+    c, p, e = require_project()
+    if e: return e
+    data      = request.json or {}
+    order_map = data.get("order_map", {})
+    dm = DocumentsManager(p)
+    dm.set_orders(doc_type, order_map)
+    return ok(reordered=len(order_map))
+
+
+@app.route("/api/documents/<doc_type>/<slug>/meta", methods=["POST"])
+def update_document_meta(doc_type, slug):
+    """Merge arbitrary fields into a document's meta. Body: {fields: {...}}"""
+    c, p, e = require_project()
+    if e: return e
+    data   = request.json or {}
+    fields = data.get("fields", {})
+    try:
+        dm   = DocumentsManager(p)
+        meta = dm.update_meta(doc_type, slug, fields)
+        return ok(meta=meta)
+    except ValueError as ex:
+        return err(str(ex))
+
+
+@app.route("/api/documents/<doc_type>/<slug>/relations", methods=["POST"])
+def add_relation(doc_type, slug):
+    """Add a relation to an entity document. Body: {target_type, target_slug, target_title, label}"""
+    c, p, e = require_project()
+    if e: return e
+    data     = request.json or {}
+    relation = {
+        "target_type":  data.get("target_type", ""),
+        "target_slug":  data.get("target_slug", ""),
+        "target_title": data.get("target_title", ""),
+        "label":        data.get("label", "related to"),
+    }
+    if not relation["target_slug"]:
+        return err("target_slug required")
+    try:
+        dm   = DocumentsManager(p)
+        meta = dm.add_relation(doc_type, slug, relation)
+        return ok(meta=meta)
+    except ValueError as ex:
+        return err(str(ex))
+
+
+@app.route("/api/documents/<doc_type>/<slug>/relations/<int:idx>", methods=["DELETE"])
+def remove_relation(doc_type, slug, idx):
+    """Remove a relation by index from an entity document."""
+    c, p, e = require_project()
+    if e: return e
+    try:
+        dm   = DocumentsManager(p)
+        meta = dm.remove_relation(doc_type, slug, idx)
+        return ok(meta=meta)
+    except ValueError as ex:
+        return err(str(ex))
 
 
 # ─── Agent document generation ───────────────────────────────────────────────
@@ -1393,7 +1566,10 @@ def generate_document():
         client = OpenAIClient(c.api_key, c.model)
         agent  = AGENT_REGISTRY[agent_type](client, p, c)
         context["document_type"] = doc_type
-        content, usage = agent.run(task, context, temperature=0.75, max_tokens=3000)
+        # Long-form docs (treatments, bibles, beat sheets) need more tokens
+        long_form_types = {"treatment", "synopsis", "logline", "beat_sheet", "bible"}
+        max_tok = 5000 if (agent_type in {"treatment", "logline", "structure"} or doc_type in long_form_types) else 3000
+        content, usage = agent.run(task, context, temperature=0.75, max_tokens=max_tok)
 
         dm   = DocumentsManager(p)
         meta = dm.save(doc_type, title, content)
@@ -1529,9 +1705,47 @@ def get_canon_graph():
                 usage.get("cost", 0.0),
             )
 
+        # Merge explicit user-defined relations from entity metadata
+        explicit_edges = dm.list_all_relations()
+        merged_edges   = list(result["edges"])
+        merged_nodes   = {n["id"]: n for n in result["nodes"]}
+
+        # Ensure every KB entity doc appears as a node (even if the LLM missed it)
+        for doc in dm.list_all():
+            slug = doc.get("slug", "")
+            if not slug:
+                continue
+            if doc.get("doc_type") not in ENTITY_TYPES:
+                continue
+            if slug not in merged_nodes:
+                merged_nodes[slug] = {
+                    "id":          slug,
+                    "label":       doc.get("title", slug),
+                    "type":        doc.get("doc_type", "character"),
+                    "description": "",
+                    "weight":      1,
+                }
+
+        for rel in explicit_edges:
+            # Ensure source and target nodes exist
+            for nid, ntitle, ntype in [
+                (rel["source_slug"], rel["source_title"], rel["source_type"]),
+                (rel["target_slug"], rel["target_title"], rel["target_type"]),
+            ]:
+                if nid and nid not in merged_nodes:
+                    merged_nodes[nid] = {"id": nid, "label": ntitle or nid, "type": ntype}
+
+            if rel["source_slug"] and rel["target_slug"]:
+                merged_edges.append({
+                    "source": rel["source_slug"],
+                    "target": rel["target_slug"],
+                    "label":  rel["label"],
+                    "explicit": True,
+                })
+
         return ok(
-            nodes=result["nodes"],
-            edges=result["edges"],
+            nodes=list(merged_nodes.values()),
+            edges=merged_edges,
             cached=result.get("cached", False),
             extracted_at=result.get("extracted_at", ""),
         )
@@ -1766,6 +1980,270 @@ def list_agents():
     return ok(agents=agents)
 
 
+# ─── Undo / Snapshot ─────────────────────────────────────────────────────────
+
+@app.route("/api/undo")
+def list_undo():
+    c, p, e = require_project()
+    if e:
+        return ok(snapshots=[])
+    n = int(request.args.get("n", 15))
+    return ok(snapshots=SnapshotManager.get_history(p, n))
+
+
+@app.route("/api/undo/<snap_id>/restore", methods=["POST"])
+def restore_undo(snap_id):
+    c, p, e = require_project()
+    if e: return e
+    ok_flag, msg = SnapshotManager.restore(p, snap_id)
+    if not ok_flag:
+        return err(msg)
+    return ok(msg=msg)
+
+
+# ─── Server control ──────────────────────────────────────────────────────────
+
+@app.route("/api/ping")
+def ping():
+    return ok(status="alive")
+
+
+@app.route("/api/server/stop", methods=["POST"])
+def server_stop():
+    """Gracefully stop the Flask process after sending the response."""
+    import threading
+    threading.Timer(0.4, lambda: os._exit(0)).start()
+    return ok(msg="Server stopping…")
+
+
+# ─── Conversation Log ─────────────────────────────────────────────────────────
+
+@app.route("/api/conversation-log")
+def conversation_log():
+    """
+    Returns a merged, newest-first chronological log of:
+      - All deliberation sessions (from session_log.jsonl)
+      - All single-agent proposals (from proposals/)
+    Each entry has: id, source, timestamp, agent, type, context, task, content, status, tokens
+    """
+    import re as _re
+    c, p, e = require_project()
+    if e:
+        return ok(entries=[])
+
+    entries = []
+
+    # ── Sessions (deliberations) ──────────────────────────────────────────────
+    sessions = SessionLogger.load(p, n=500)
+    for s in sessions:
+        entries.append({
+            "id":        s.get("id", ""),
+            "source":    "session",
+            "timestamp": s.get("timestamp", ""),
+            "team":      s.get("team", ""),
+            "heading":   s.get("heading", ""),
+            "task":      s.get("task", ""),
+            "turns":     s.get("turns", []),
+            "total_tokens": s.get("total_tokens", 0),
+            "total_cost":   s.get("total_cost", 0.0),
+        })
+
+    # ── Single-agent proposals ────────────────────────────────────────────────
+    pm  = ProposalManager(p)
+    raw = pm.list_all()
+    for prop in raw:
+        rationale = prop.get("rationale", "")
+        # Extract task from rationale (format: "Generated by X.\nTask: ...")
+        task_match = _re.search(r"Task:\s*(.+?)(?:\n|$)", rationale, _re.DOTALL)
+        task = task_match.group(1).strip() if task_match else rationale[:120]
+        tf = prop.get("target_file", "")
+        rel_target = os.path.relpath(tf, p) if os.path.isabs(tf) else tf
+        entries.append({
+            "id":        prop.get("id", ""),
+            "source":    "proposal",
+            "timestamp": prop.get("created", ""),
+            "agent":     prop.get("agent", ""),
+            "type":      prop.get("type", ""),
+            "context":   rel_target,
+            "task":      task,
+            "content":   prop.get("new_content", ""),
+            "status":    prop.get("status", ""),
+            "tokens":    prop.get("tokens", {}),
+        })
+
+    # Sort newest first
+    entries.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return ok(entries=entries[:500])
+
+
+# ─── Book ─────────────────────────────────────────────────────────────────────
+
+from src.book          import BookManager
+from src.agents        import BookWriterAgent as _BookWriterAgent
+
+
+@app.route("/api/book/status")
+def book_status():
+    c, p, e = require_project()
+    if e: return ok(outline_exists=False, chapters=[], total_words=0,
+                    target_words=85000, planned_chapters=0, next_chapter=1)
+    bm = BookManager(p)
+    return ok(**bm.status())
+
+
+@app.route("/api/book/plan/stream", methods=["POST"])
+def book_plan_stream():
+    """
+    Stream the chapter-by-chapter book outline.
+    Uses BookWriterAgent in planning mode with a high max_tokens budget.
+    Body: {task} (optional custom instruction)
+    """
+    c, p, e = require_project()
+    if e: return e
+    if not c.api_key: return err("No API key configured")
+
+    user_task = (request.json or {}).get("task", "").strip()
+
+    cm = CanonManager(p)
+    mm = MemoryManager(p)
+    canon_text, _ = cm.read()
+    memory        = mm.read()
+
+    plan_task = (
+        "Write a complete chapter-by-chapter book outline for a novel based on this story world.\n\n"
+        "The novel should be 80,000–100,000 words across 25–30 chapters.\n\n"
+        "For each chapter write:\n"
+        "## CHAPTER [N]: [CHAPTER TITLE]\n"
+        "**Words:** ~[target]\n"
+        "**Setting:** [location/time]\n"
+        "**POV:** [character]\n"
+        "[3–4 paragraph detailed summary of what happens, what changes, what the reader feels]\n\n"
+        "Make the arc cover: setup (ch 1–5), rising action (ch 6–18), midpoint reversal (~ch 13), "
+        "all-is-lost (~ch 20), climax and resolution (ch 22–25+).\n"
+        "Draw entirely from the canon and knowledge base. Be specific — use character names, "
+        "locations, events, and world details from the material.\n\n"
+    )
+    if user_task:
+        plan_task += f"Additional guidance: {user_task}"
+
+    bm = BookManager(p)
+
+    def generate():
+        try:
+            client = OpenAIClient(c.api_key, c.model)
+            agent  = _BookWriterAgent(client, p, c)
+            full   = ""
+            for chunk in agent.run_stream(
+                plan_task,
+                context={"canon": canon_text, "working_memory": memory},
+                temperature=0.75,
+                max_tokens=6000,
+            ):
+                if isinstance(chunk, str):
+                    full += chunk
+                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                else:
+                    usage = chunk
+                    bm.save_outline(full)
+                    c.add_tokens(
+                        usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0),
+                        usage.get("cost", 0.0),
+                    )
+                    yield f"data: {json.dumps({'done': True, 'chapters': bm.count_planned_chapters()})}\n\n"
+        except Exception as ex:
+            yield f"data: {json.dumps({'error': str(ex)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+
+
+@app.route("/api/book/write-chapter/stream", methods=["POST"])
+def book_write_chapter_stream():
+    """
+    Stream the writing of a single book chapter.
+    Body: {chapter_number: int}
+    """
+    c, p, e = require_project()
+    if e: return e
+    if not c.api_key: return err("No API key configured")
+
+    chapter_num = int((request.json or {}).get("chapter_number", 1))
+
+    cm = CanonManager(p)
+    mm = MemoryManager(p)
+    canon_text, _ = cm.read()
+    memory        = mm.read()
+
+    bm           = BookManager(p)
+    outline      = bm.get_outline()
+    chapter_brief = bm.get_chapter_brief(chapter_num)
+    prev_end     = bm.previous_chapter_tail(chapter_num)
+
+    def generate():
+        try:
+            client = OpenAIClient(c.api_key, c.model)
+            agent  = _BookWriterAgent(client, p, c)
+            full   = ""
+            for chunk in agent.run_stream(
+                f"Write Chapter {chapter_num} of the novel.",
+                context={
+                    "canon":                canon_text,
+                    "working_memory":       memory,
+                    "book_outline":         outline,
+                    "chapter_number":       chapter_num,
+                    "chapter_brief":        chapter_brief,
+                    "previous_chapter_end": prev_end,
+                },
+                temperature=0.85,
+                max_tokens=6000,
+            ):
+                if isinstance(chunk, str):
+                    full += chunk
+                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                else:
+                    usage = chunk
+                    bm.save_chapter(chapter_num, full)
+                    wc = len(full.split())
+                    c.add_tokens(
+                        usage.get("prompt_tokens", 0),
+                        usage.get("completion_tokens", 0),
+                        usage.get("cost", 0.0),
+                    )
+                    yield f"data: {json.dumps({'done': True, 'word_count': wc, 'chapter': chapter_num})}\n\n"
+        except Exception as ex:
+            yield f"data: {json.dumps({'error': str(ex)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+
+
+@app.route("/api/book/chapter/<int:n>")
+def get_book_chapter(n):
+    c, p, e = require_project()
+    if e: return e
+    bm = BookManager(p)
+    content = bm.get_chapter(n)
+    if content is None:
+        return err("Chapter not found")
+    return ok(content=content, chapter=n)
+
+
+@app.route("/api/book/outline")
+def get_book_outline():
+    c, p, e = require_project()
+    if e: return e
+    bm = BookManager(p)
+    return ok(outline=bm.get_outline(), exists=bm.has_outline())
+
+
+@app.route("/api/book/export")
+def export_book():
+    c, p, e = require_project()
+    if e: return e
+    bm      = BookManager(p)
+    content = bm.export_full_book()
+    return ok(content=content, word_count=len(content.split()))
+
+
 # ─── Agent Team (profiles + role editing) ────────────────────────────────────
 
 from src.agent import get_role_override, save_role_override
@@ -1892,6 +2370,7 @@ def save_worldbible_section(section_id):
     content = (request.json or {}).get("content", "")
     wbm = WorldBibleManager(p)
     try:
+        SnapshotManager.push(p, wbm.section_path(section_id), f"WorldBible/{section_id} — manual edit")
         meta = wbm.save_section(section_id, content)
         VersionTracker(p).commit({
             "id": f"wb_{section_id}_{meta['updated_at'][:10]}",

@@ -40,6 +40,9 @@ Constraints:
 """
 
     def get_task_prompt(self, task: str, context: dict) -> str:
+        prior = context.get("prior_deliberation", "")
+        prior_block = f"\n## PRIOR DELIBERATION\n\n{prior}\n" if prior else ""
+
         return f"""\
 ## TASK
 
@@ -56,12 +59,13 @@ Constraints:
 ## CURRENT WORKING MEMORY (to be compressed)
 
 {context.get('working_memory', 'Working memory is empty.')}
-
+{prior_block}
 ---
 
 ## INSTRUCTIONS
 
 Compress the Working Memory above. Preserve all critical story information.
+Where prior deliberation exists, extract any new facts, decisions, or continuity details and fold them in.
 Output only the complete compressed Working Memory document, formatted as:
 
 # WORKING MEMORY

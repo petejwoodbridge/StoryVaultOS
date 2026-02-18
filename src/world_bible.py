@@ -9,7 +9,7 @@ Sections:
     lore       — World history, mythology, backstory
     logic      — Rules: magic, technology, physics
     tone       — Visual language, cinematic approach, mood
-    structure  — Three-act breakdown, key sequences
+    structure  — Story arc: prose summary of acts, key turns, inciting incident, climax
     rules      — Non-negotiable world rules injected into all agent calls
 """
 

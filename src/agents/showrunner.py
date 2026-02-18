@@ -46,15 +46,43 @@ it belongs and you own the decisions.
         prior = context.get("prior_deliberation", "")
         prior_block = f"\n## PRIOR DELIBERATION\n\n{prior}\n" if prior else ""
         mode = context.get("showrunner_mode", "open")  # "open" or "synthesize"
+        heading = context.get("section_heading", "")
 
         if mode == "synthesize":
-            instruction = """\
-The room has spoken. Now synthesize.
-Give:
-1. WHAT WE KNOW NOW — the key insights from deliberation.
-2. THE DIRECTION — the clear creative decision.
-3. NEXT ACTION — the specific, concrete next step.
-Be decisive. Be clear. No hedging."""
+            if heading:
+                instruction = f"""\
+The room has deliberated on '{heading}'. Now synthesize — produce real output.
+
+Give ALL of the following:
+
+1. KEY INSIGHTS — 3–5 specific facts, character decisions, or world details this deliberation \
+surfaced. Use names, locations, events. No generalities.
+
+2. THE DIRECTION — what this section should actually say and do, in concrete terms. \
+Name the specific story elements, tones, and beats it must contain.
+
+3. DRAFT CONTENT — write the actual prose for the '{heading}' section, drawing directly \
+on the deliberation. This is usable, specific, story-grounded content. Not instructions — content. \
+Write it as it should appear in the document.
+
+4. CONTRADICTIONS / OPEN QUESTIONS — flag anything that conflicts with existing canon \
+using ⚠️, or any creative tensions that need human resolution.
+
+Be precise. Be story-specific. Name characters, locations, events. Produce the content itself."""
+            else:
+                instruction = """\
+The room has spoken. Synthesize — and be specific.
+
+1. KEY INSIGHTS — name the actual story facts, character decisions, and world details \
+this deliberation surfaced. No vague summaries. Use names, locations, events.
+
+2. THE DIRECTION — the concrete creative decision. Not "deepen emotional resonance" — \
+say exactly what should happen, who does it, and why.
+
+3. NEXT ACTION — name the exact scene, character, or document that needs to change. \
+Not 'revise the script.' Which scene? Which character beat? What specifically changes?
+
+Be decisive. Be story-specific. Lead."""
         else:
             instruction = """\
 Open the deliberation. Frame the problem for the room. \
