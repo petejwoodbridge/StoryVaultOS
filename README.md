@@ -8,6 +8,10 @@
 
 ---
 
+https://github.com/user-attachments/assets/64163374-4fce-437b-a99f-c7cdb7bbed2b
+
+---
+
 ## What is StoryVaultOS?
 
 StoryVaultOS is a creative development environment for screenwriters, novelists, and showrunners
@@ -15,15 +19,23 @@ who want AI collaboration on their own terms. It runs entirely on your machine, 
 as plain Markdown files, and puts a team of 11 specialised AI agents at your disposal — each
 with a distinct voice and area of expertise.
 
+Whether you're developing a screenplay, writing a novel, or building a series bible, StoryVaultOS
+provides a comprehensive **Knowledge Base** system that tracks characters, locations, creatures,
+and world elements. Every change is impact-checked against your existing canon, and agents
+automatically flag contradictions — giving you the confidence to develop long-form stories
+without losing continuity.
+
 The key design principle is **human-in-the-loop**. No AI agent writes directly to your story.
 Every suggestion, revision, and new scene goes through a **Propose → Review → Approve** cycle.
 You see the diff. You decide what lands.
 
-It's built for the long project: the feature, the pilot, the series bible. The kind of work
-where continuity matters, where contradictions accumulate, and where you need a system that
-remembers everything you've decided.
+It's built for the long project: the feature, the pilot, the series bible, or the multi-chapter
+novel. The kind of work where continuity matters, where contradictions accumulate, and where
+you need a system that remembers everything you've decided. The built-in Knowledge Base ensures
+your agents always write with awareness of your established world, characters, and canon rules.
 
-**What it isn't:** a one-click story generator, a writing app, or a chatbot. It's a toolkit.
+**What it isn't:** a one-click story generator, a writing app, or a chatbot. It's a toolkit for
+serious story development — whether that's a screenplay, a book, or an entire fictional universe.
 
 ---
 
@@ -35,10 +47,13 @@ remembers everything you've decided.
 - **Multi-agent deliberation** — send a task to a whole team; agents debate, critique each other,
   and synthesise a recommendation; you control the number of rounds (1–5)
 - **Proposal system** — every AI output is a proposal; nothing changes until you approve it
+- **Knowledge Base** — character, location, creature, world element documents with automatic
+  impact checking; KB-aware agents flag conflicts during deliberation; perfect for novels,
+  series, and long-form projects where continuity is critical
 - **World Bible** — 6-section structure (Overview, Lore, Logic, Tone, Structure, Rules) for
   capturing your story world; agents flag contradictions inline
-- **Knowledge Base** — character, location, creature, world element documents; impact-checked
-  when you save changes; KB-aware agents flag conflicts during deliberation
+- **Book & Screenplay support** — structured workflow for both prose chapters and screenplay
+  scenes; exportable as formatted screenplay or markdown
 - **Scene workflow** — structured cards, drafts, critiques, revisions; exportable as screenplay
 - **Agent Room** — real-time deliberation feed with live streaming SSE output
 - **Version tracking** — immutable commit log for every approved change
