@@ -44,7 +44,7 @@ DOC_TYPES: dict[str, dict] = {
         "extension": ".md",
     },
     "creature": {
-        "label":     "Creatures",
+        "label":     "Supporting Characters",
         "folder":    "Creatures",
         "icon":      "X",
         "extension": ".md",

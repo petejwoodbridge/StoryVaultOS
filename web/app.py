@@ -530,6 +530,74 @@ def get_teams():
     return ok(teams=list_teams())
 
 
+# ─── Assistant Chat (single-agent SSE streaming) ─────────────────────────────
+
+@app.route("/api/chat/stream", methods=["POST"])
+def chat_stream():
+    """
+    Simple conversational streaming endpoint for the right-panel assistant.
+    Body: {message, context, agent}
+      context — the current page text (used as working memory / background)
+      agent   — agent key (default: showrunner)
+    """
+    c, p, e = require_project()
+
+    def _err(msg):
+        def g():
+            yield f"data: {json.dumps({'type': 'error', 'message': msg})}\n\n"
+            yield "data: [DONE]\n\n"
+        return Response(stream_with_context(g()), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    if e: return _err("No active project")
+    if not c.api_key: return _err("No API key configured")
+
+    data        = request.json or {}
+    message     = (data.get("message") or "").strip()
+    page_ctx    = (data.get("context") or "").strip()
+    agent_key   = data.get("agent", "showrunner")
+
+    if not message: return _err("No message provided")
+
+    agent_cls = AGENT_REGISTRY.get(agent_key) or AGENT_REGISTRY.get("showrunner")
+    client    = OpenAIClient(c.api_key, c.model)
+    agent     = agent_cls(client, p, c)
+
+    cm         = CanonManager(p)
+    canon_text, _ = cm.read()
+    canon_text = canon_text or ""
+    wm_text    = MemoryManager(p).read_working()
+
+    # Page content becomes the focused working context
+    context = {
+        "canon":          canon_text,
+        "working_memory": (wm_text + "\n\n---\n\n" + page_ctx) if page_ctx else wm_text,
+    }
+
+    def generate():
+        try:
+            for item in agent.run_stream(message, context=context, temperature=0.7):
+                if isinstance(item, dict):
+                    # Final usage dict yielded by complete_stream
+                    c.add_tokens(
+                        item.get("prompt_tokens", 0),
+                        item.get("completion_tokens", 0),
+                        item.get("cost", 0.0),
+                    )
+                else:
+                    yield f"data: {json.dumps({'type': 'token', 'text': item})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as ex:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(ex)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ─── Deliberation (SSE streaming) ────────────────────────────────────────────
 
 @app.route("/api/deliberate/stream", methods=["POST"])
@@ -1539,6 +1607,33 @@ def remove_relation(doc_type, slug, idx):
         return err(str(ex))
 
 
+@app.route("/api/documents/<doc_type>/<slug>/relations/by-target", methods=["DELETE"])
+def remove_relation_by_target(doc_type, slug):
+    """Remove the first relation matching target_slug (and optionally label). Body: {target_slug, label}"""
+    c, p, e = require_project()
+    if e: return e
+    data        = request.json or {}
+    target_slug = data.get("target_slug", "")
+    label       = data.get("label", "")
+    try:
+        dm        = DocumentsManager(p)
+        meta      = dm._read_meta(doc_type, slug)
+        relations = meta.get("relations", [])
+        idx       = next(
+            (i for i, r in enumerate(relations)
+             if r.get("target_slug") == target_slug and (not label or r.get("label") == label)),
+            None,
+        )
+        if idx is None:
+            return err("Relation not found")
+        relations.pop(idx)
+        meta["relations"] = relations
+        dm._write_meta(meta, doc_type, slug)
+        return ok(meta=meta)
+    except Exception as ex:
+        return err(str(ex))
+
+
 # ─── Agent document generation ───────────────────────────────────────────────
 
 @app.route("/api/agents/generate-doc", methods=["POST"])
@@ -1743,6 +1838,25 @@ def get_canon_graph():
                     "explicit": True,
                 })
 
+        # Filter excluded edges
+        excl_path = os.path.join(p, "Canon", "graph_excluded.json")
+        try:
+            with open(excl_path, encoding="utf-8") as f:
+                excluded = json.load(f)
+            if excluded:
+                def _is_excluded(edge):
+                    s = str(edge.get("source", ""))
+                    t = str(edge.get("target", ""))
+                    l = edge.get("label", "")
+                    return any(
+                        x.get("source") == s and x.get("target") == t and
+                        (not x.get("label") or x.get("label") == l)
+                        for x in excluded
+                    )
+                merged_edges = [e for e in merged_edges if not _is_excluded(e)]
+        except Exception:
+            pass
+
         return ok(
             nodes=list(merged_nodes.values()),
             edges=merged_edges,
@@ -1751,6 +1865,52 @@ def get_canon_graph():
         )
     except Exception as ex:
         return err(str(ex))
+
+
+@app.route("/api/canon/graph/exclude", methods=["POST"])
+def exclude_graph_edge():
+    """Permanently hide an edge. Body: {source, target, label}"""
+    c, p, e = require_project()
+    if e: return e
+    data   = request.json or {}
+    source = data.get("source", "")
+    target = data.get("target", "")
+    label  = data.get("label",  "")
+    if not source or not target:
+        return err("source and target required")
+
+    excl_path = os.path.join(p, "Canon", "graph_excluded.json")
+    try:
+        with open(excl_path, encoding="utf-8") as f:
+            excl = json.load(f)
+    except Exception:
+        excl = []
+
+    entry = {"source": source, "target": target, "label": label}
+    if not any(x.get("source") == source and x.get("target") == target and x.get("label") == label for x in excl):
+        excl.append(entry)
+    os.makedirs(os.path.join(p, "Canon"), exist_ok=True)
+    with open(excl_path, "w", encoding="utf-8") as f:
+        json.dump(excl, f, indent=2)
+
+    # Also purge from graph.json cache so it takes effect immediately
+    cache_path = os.path.join(p, "Canon", "graph.json")
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                cache = json.load(f)
+            cache["edges"] = [
+                edge for edge in cache.get("edges", [])
+                if not (str(edge.get("source", "")) == source and
+                        str(edge.get("target", "")) == target and
+                        edge.get("label", "") == label)
+            ]
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(cache, f, indent=2)
+        except Exception:
+            pass
+
+    return ok(msg="Edge excluded")
 
 
 # ─── Proposal from text (Agent Room → Canon) ─────────────────────────────────
@@ -2010,9 +2170,22 @@ def ping():
 
 @app.route("/api/server/stop", methods=["POST"])
 def server_stop():
-    """Gracefully stop the Flask process after sending the response."""
-    import threading
-    threading.Timer(0.4, lambda: os._exit(0)).start()
+    """Stop the Flask process; optionally relaunch in a new terminal window."""
+    import threading, subprocess
+    relaunch = (request.json or {}).get("relaunch", True)
+    web_dir  = os.path.dirname(os.path.abspath(__file__))
+
+    def _shutdown():
+        if relaunch:
+            subprocess.Popen(
+                'start cmd /k python app.py',
+                shell=True,
+                cwd=web_dir,
+            )
+        import time; time.sleep(0.3)
+        os._exit(0)
+
+    threading.Thread(target=_shutdown, daemon=True).start()
     return ok(msg="Server stopping…")
 
 
@@ -2082,6 +2255,86 @@ from src.book          import BookManager
 from src.agents        import BookWriterAgent as _BookWriterAgent
 
 
+def _build_book_context(project_path: str) -> dict:
+    """
+    Build a comprehensive context dict for book planning and chapter writing.
+    Loads ALL KB entities and ALL WorldBible sections without the normal
+    per-agent truncation limits — books need the full picture.
+    """
+    docs_root = os.path.join(project_path, "Documents")
+    wb_root   = os.path.join(project_path, "WorldBible")
+
+    # ── KB entities ────────────────────────────────────────────────────── #
+    _FOLDERS = [
+        ("Characters",    "LEAD CHARACTER"),
+        ("Creatures",     "SUPPORTING CHARACTER"),
+        ("Locations",     "LOCATION"),
+        ("Concepts",      "CONCEPT"),
+        ("Objects",       "OBJECT"),
+        ("Events",        "EVENT"),
+        ("WorldBuilding", "WORLD BUILDING"),
+    ]
+    kb_parts = []
+    for folder_name, label in _FOLDERS:
+        folder = os.path.join(docs_root, folder_name)
+        if not os.path.isdir(folder):
+            continue
+        for fname in sorted(os.listdir(folder)):
+            if not fname.endswith(".meta.json"):
+                continue
+            slug    = fname[:-len(".meta.json")]
+            md_path = os.path.join(folder, f"{slug}.md")
+            if not os.path.exists(md_path):
+                continue
+            try:
+                with open(os.path.join(folder, fname), encoding="utf-8") as f:
+                    meta = json.load(f)
+                with open(md_path, encoding="utf-8") as f:
+                    content = f.read().strip()
+                if not content:
+                    continue
+                title = meta.get("title", slug)
+                kb_parts.append(f"### {title} [{label}]\n{content}")
+            except Exception:
+                pass
+
+    # ── WorldBible sections ────────────────────────────────────────────── #
+    wb_parts = []
+    wb_order = ["overview", "lore", "logic", "tone", "structure", "rules"]
+    wb_labels = {
+        "overview": "OVERVIEW",
+        "lore":     "LORE & HISTORY",
+        "logic":    "WORLD BIBLE",
+        "tone":     "TONE & STYLE",
+        "structure":"STRUCTURE",
+        "rules":    "WORLD RULES",
+    }
+    for sid in wb_order:
+        md_path = os.path.join(wb_root, f"{sid}.md")
+        if os.path.exists(md_path):
+            try:
+                with open(md_path, encoding="utf-8") as f:
+                    content = f.read().strip()
+                if content:
+                    wb_parts.append(f"### {wb_labels.get(sid, sid.upper())}\n{content}")
+            except Exception:
+                pass
+
+    # ── Canon & memory ─────────────────────────────────────────────────── #
+    canon_path  = os.path.join(project_path, "Canon", "Canon.md")
+    memory_path = os.path.join(project_path, "Memory", "WorkingMemory.md")
+    canon_text  = open(canon_path,  encoding="utf-8").read() if os.path.exists(canon_path)  else ""
+    memory_text = open(memory_path, encoding="utf-8").read() if os.path.exists(memory_path) else ""
+
+    return {
+        "canon":          canon_text,
+        "working_memory": memory_text,
+        "kb_documents":   "\n\n---\n\n".join(kb_parts),
+        "world_bible":    "\n\n---\n\n".join(wb_parts),
+        "world_rules":    wb_parts[-1] if wb_parts else "",  # rules is last
+    }
+
+
 @app.route("/api/book/status")
 def book_status():
     c, p, e = require_project()
@@ -2095,7 +2348,7 @@ def book_status():
 def book_plan_stream():
     """
     Stream the chapter-by-chapter book outline.
-    Uses BookWriterAgent in planning mode with a high max_tokens budget.
+    Uses BookWriterAgent with full KB + WorldBible context.
     Body: {task} (optional custom instruction)
     """
     c, p, e = require_project()
@@ -2103,28 +2356,40 @@ def book_plan_stream():
     if not c.api_key: return err("No API key configured")
 
     user_task = (request.json or {}).get("task", "").strip()
-
-    cm = CanonManager(p)
-    mm = MemoryManager(p)
-    canon_text, _ = cm.read()
-    memory        = mm.read()
+    ctx       = _build_book_context(p)
 
     plan_task = (
-        "Write a complete chapter-by-chapter book outline for a novel based on this story world.\n\n"
-        "The novel should be 80,000–100,000 words across 25–30 chapters.\n\n"
-        "For each chapter write:\n"
-        "## CHAPTER [N]: [CHAPTER TITLE]\n"
-        "**Words:** ~[target]\n"
-        "**Setting:** [location/time]\n"
-        "**POV:** [character]\n"
-        "[3–4 paragraph detailed summary of what happens, what changes, what the reader feels]\n\n"
-        "Make the arc cover: setup (ch 1–5), rising action (ch 6–18), midpoint reversal (~ch 13), "
-        "all-is-lost (~ch 20), climax and resolution (ch 22–25+).\n"
-        "Draw entirely from the canon and knowledge base. Be specific — use character names, "
-        "locations, events, and world details from the material.\n\n"
+        "You have been given the COMPLETE knowledge base for this story world — "
+        "every character, location, concept, object, event, and world-building document, "
+        "plus the full Story World Bible.\n\n"
+        "Write a COMPLETE, FULL chapter-by-chapter outline for a novel based on this material.\n\n"
+        "TARGET: 80,000–100,000 words across 25–30 chapters.\n\n"
+        "CRITICAL REQUIREMENT: You MUST write ALL chapters, numbered 1 through the final chapter. "
+        "Do NOT stop early. Do NOT summarise the remaining chapters. Do NOT write 'and so on' or "
+        "'remaining chapters follow the same pattern'. Every single chapter gets its full entry. "
+        "Keep writing until you have written the LAST chapter.\n\n"
+        "STORY ARC STRUCTURE:\n"
+        "- Chapters 1–5: Setup. Establish world, protagonist, central conflict.\n"
+        "- Chapters 6–12: Rising action. Complications, relationships, stakes raised.\n"
+        "- Chapter 13: Midpoint reversal. The story turns.\n"
+        "- Chapters 14–19: Escalation. Allies tested, antagonist reveals, false victories.\n"
+        "- Chapter 20: All-is-lost moment.\n"
+        "- Chapters 21–25+: Climax, resolution, denouement.\n\n"
+        "FOR EACH CHAPTER, write EXACTLY this format:\n"
+        "## Chapter [N]: [Title]\n"
+        "**Word target:** ~[3,000–4,500]\n"
+        "**Setting:** [specific location from the knowledge base]\n"
+        "**POV:** [character name]\n"
+        "**Summary:** [2–3 paragraphs. Be specific. Use character names, locations, "
+        "objects, events, and concepts from the knowledge base. What happens, what changes, "
+        "what the reader feels, what the chapter's dramatic question is.]\n\n"
+        "Reference ALL named characters (lead and supporting), ALL key locations, "
+        "ALL significant objects, events, and concepts from the knowledge base. "
+        "Nothing from the material should be wasted.\n\n"
+        "BEGIN NOW with Chapter 1 and do not stop until you have written the final chapter.\n\n"
     )
     if user_task:
-        plan_task += f"Additional guidance: {user_task}"
+        plan_task += f"Additional guidance from the author: {user_task}"
 
     bm = BookManager(p)
 
@@ -2135,9 +2400,9 @@ def book_plan_stream():
             full   = ""
             for chunk in agent.run_stream(
                 plan_task,
-                context={"canon": canon_text, "working_memory": memory},
+                context=ctx,
                 temperature=0.75,
-                max_tokens=6000,
+                max_tokens=16000,
             ):
                 if isinstance(chunk, str):
                     full += chunk
@@ -2169,15 +2434,16 @@ def book_write_chapter_stream():
 
     chapter_num = int((request.json or {}).get("chapter_number", 1))
 
-    cm = CanonManager(p)
-    mm = MemoryManager(p)
-    canon_text, _ = cm.read()
-    memory        = mm.read()
-
+    ctx          = _build_book_context(p)
     bm           = BookManager(p)
     outline      = bm.get_outline()
     chapter_brief = bm.get_chapter_brief(chapter_num)
     prev_end     = bm.previous_chapter_tail(chapter_num)
+
+    ctx["book_outline"]         = outline
+    ctx["chapter_number"]       = chapter_num
+    ctx["chapter_brief"]        = chapter_brief
+    ctx["previous_chapter_end"] = prev_end
 
     def generate():
         try:
@@ -2186,14 +2452,7 @@ def book_write_chapter_stream():
             full   = ""
             for chunk in agent.run_stream(
                 f"Write Chapter {chapter_num} of the novel.",
-                context={
-                    "canon":                canon_text,
-                    "working_memory":       memory,
-                    "book_outline":         outline,
-                    "chapter_number":       chapter_num,
-                    "chapter_brief":        chapter_brief,
-                    "previous_chapter_end": prev_end,
-                },
+                context=ctx,
                 temperature=0.85,
                 max_tokens=6000,
             ):
@@ -2227,12 +2486,23 @@ def get_book_chapter(n):
     return ok(content=content, chapter=n)
 
 
-@app.route("/api/book/outline")
+@app.route("/api/book/outline", methods=["GET"])
 def get_book_outline():
     c, p, e = require_project()
     if e: return e
     bm = BookManager(p)
     return ok(outline=bm.get_outline(), exists=bm.has_outline())
+
+
+@app.route("/api/book/outline", methods=["PUT"])
+def save_book_outline():
+    """Save a manually edited outline."""
+    c, p, e = require_project()
+    if e: return e
+    content = (request.json or {}).get("content", "")
+    bm = BookManager(p)
+    bm.save_outline(content)
+    return ok(chapters=bm.count_planned_chapters())
 
 
 @app.route("/api/book/export")

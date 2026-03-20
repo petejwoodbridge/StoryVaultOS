@@ -10,6 +10,9 @@ from .treatment   import TreatmentAgent
 from .lore        import LoreAgent
 from .showrunner  import ShowrunnerAgent
 from .book_writer import BookWriterAgent
+from .marketing   import MarketingAgent
+from .audience    import AudienceAgent
+from .dialogue    import DialogueAgent
 
 AGENT_REGISTRY: dict[str, type] = {
     "writer":       WriterAgent,
@@ -24,4 +27,7 @@ AGENT_REGISTRY: dict[str, type] = {
     "lore":         LoreAgent,
     "showrunner":   ShowrunnerAgent,
     "book_writer":  BookWriterAgent,
+    "marketing":    MarketingAgent,
+    "audience":     AudienceAgent,
+    "dialogue":     DialogueAgent,
 }

@@ -7,10 +7,10 @@ Structured as individual markdown files per section under Projects/<name>/WorldB
 Sections:
     overview   — Logline, premise, theme, genre, emotional core
     lore       — World history, mythology, backstory
-    logic      — Rules: magic, technology, physics
+    logic      — Master world bible: everything about how this world works
     tone       — Visual language, cinematic approach, mood
     structure  — Story arc: prose summary of acts, key turns, inciting incident, climax
-    rules      — Non-negotiable world rules injected into all agent calls
+    rules      — Non-negotiable constraints (including world logic/physics) injected into all agent calls
 """
 
 import os
@@ -41,9 +41,9 @@ class WorldBibleManager:
             "order":       1,
         },
         "logic": {
-            "label":       "World Logic",
-            "description": "Rules: magic, technology, physics — how this world fundamentally works",
-            "icon":        "WL",
+            "label":       "World Bible",
+            "description": "The master world reference — cultures, factions, geography, history, technology, mythology, everything that makes this world real",
+            "icon":        "WB",
             "order":       2,
         },
         "tone": {
@@ -60,7 +60,7 @@ class WorldBibleManager:
         },
         "rules": {
             "label":       "World Rules",
-            "description": "Non-negotiable constraints — injected into EVERY agent call as mandatory law",
+            "description": "Non-negotiable constraints: magic systems, physics, laws, hard limits — injected into EVERY agent call as mandatory law",
             "icon":        "WR",
             "order":       5,
         },
